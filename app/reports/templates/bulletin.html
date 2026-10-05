@@ -1,0 +1,25 @@
+<div class="page"><div class="wm">${wm}</div>
+<div class="top">
+ <div class="l">${ministere}<br>********<br>${direction}<br>********${insp}<br><b>${ecole}</b></div>
+ <div class="m">${logo}</div>
+ <div class="r"><b>RÉPUBLIQUE TOGOLAISE</b><br>Travail-Liberté-Patrie<br><br><b>${devise}</b><br><b>${ville}</b></div>
+</div>
+<div class="box title">ANNÉE SCOLAIRE: ${annee}<br>BULLETIN DE NOTES DU ${periode_up}</div>
+<div class="box info"><div>Nom et Prénoms de l'Élève : ${nom_complet}</div><div>Sexe: ${sexe}</div>
+<div>Statut: ${statut}</div><div>Classe: ${classe}</div><div></div><div>Effectif: ${effectif}</div></div>
+<table class="notes"><colgroup>${cols}</colgroup><tr><th rowspan="2">Discipline</th><th colspan="2">Notes de classe</th><th rowspan="2">Moy. Classe sur 20</th>
+<th rowspan="2">Note de Compo</th><th rowspan="2">Moy. Gen. sur 20</th><th rowspan="2">Coef</th><th rowspan="2">Note définitive</th>
+<th rowspan="2">Rang</th><th rowspan="2">Appréciations</th><th rowspan="2">Nom du professeur</th><th rowspan="2">Signature</th></tr>
+<tr><th>Interro</th><th>Devoir</th></tr>${rows}${total}</table>
+<div class="row3">
+ <div class="box"><b>Période :</b> ${periode}<br><b>Moy. Elève :</b> ${moy}<br><b>Rang :</b> ${rang}<hr>
+  <b>Distinctions</b><br>Plus forte Moy. : ${max}<br>Plus faible Moy. : ${min}<br>Moy. Gle Classe : ${avg}</div>
+ <div class="box"><b>Appréciations et décisions du conseil des profs</b><br>Tableau d'Excellence : ${excellence}<br>
+  Tableau d'Honneur : ${honneur}<br>Félicitations : ${felicitations}<br>Encouragements : ${encouragements}</div>
+ <div class="box"><b>Discipline</b><br><b>Absences :</b> ${absences}<br><b>Sanctions :</b> ${sanctions}<br>
+  <b>Mérites :</b> ${merites}<br><b>Exclusions :</b> ${exclusions}</div>
+</div>
+<div class="box sign"><div><b>Signature et Nom du professeur titulaire</b>${titulaire}</div>
+<div><b>Fait à ${ville}, le ${today}</b><b>Le Directeur</b>${directeur}</div></div>
+<div class="box nb">N.B: Veuillez garder précieusement ce bulletin de notes. Aucun duplicata ne sera délivré !<br>Imprimé le ${today}</div>
+</div>
