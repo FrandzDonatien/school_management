@@ -5,7 +5,7 @@ from tkinter import filedialog, messagebox
 from app.calculations.grades import calc_mg
 from app.constants import C, PERIODES
 from app.database.queries import cur_year
-from app.repositories import class_repository, grade_repository, student_repository, subject_repository
+from app.repositories import class_repository, class_subject_repository, grade_repository, student_repository
 from app.services import grade_import_service, grade_service
 from app.ui.components.buttons import button
 from app.ui.components.card import card, label
@@ -25,7 +25,7 @@ class GradesPage(ctk.CTkFrame):
         top = card(self)
         top.grid(row=0, column=0, sticky="ew", pady=(0, 16))
         top.columnconfigure((0, 1, 2), weight=1, uniform="g")
-        self.class_cb = labeled_combo(top, 0, "Classe", lambda _=None: self.reload())
+        self.class_cb = labeled_combo(top, 0, "Classe", lambda _=None: self.on_class())
         self.subject_cb = labeled_combo(top, 1, "Matière", lambda _=None: self.reload())
         self.period_cb = labeled_combo(top, 2, "Période", lambda _=None: self.reload(), PERIODES)
         self.period_cb.set(PERIODES[0])
@@ -49,13 +49,19 @@ class GradesPage(ctk.CTkFrame):
         self.frame.columnconfigure(1, weight=1)
 
     def refresh(self):
-        y = cur_year()
-        self.classes = class_repository.options(y)
-        self.subjects = subject_repository.options(y)
-        for cb, d in ((self.class_cb, self.classes), (self.subject_cb, self.subjects)):
-            cb.configure(values=list(d) or [""])
-            if cb.get() not in d:
-                cb.set(next(iter(d), ""))
+        self.classes = class_repository.options(cur_year())
+        self.class_cb.configure(values=list(self.classes) or [""])
+        if self.class_cb.get() not in self.classes:
+            self.class_cb.set(next(iter(self.classes), ""))
+        self.on_class()
+
+    def on_class(self):
+        """Les matières proposées dépendent de la classe (voir « Matières par classe »)."""
+        cid = self.classes.get(self.class_cb.get())
+        self.subjects = class_subject_repository.options(cid, cur_year()) if cid else {}
+        self.subject_cb.configure(values=list(self.subjects) or [""])
+        if self.subject_cb.get() not in self.subjects:
+            self.subject_cb.set(next(iter(self.subjects), ""))
         self.reload()
 
     def reload(self):
@@ -100,6 +106,9 @@ class GradesPage(ctk.CTkFrame):
     def save(self):
         if blocked():
             return
+        if not self.subjects.get(self.subject_cb.get()):
+            messagebox.showinfo("Notes", "Cette classe n'a aucune matière : créez-en dans la page « Matières ».")
+            return
         sub, per = self.subjects.get(self.subject_cb.get()), self.period_cb.get()
         data = {}
         for sid, (es, _) in self.rows.items():
@@ -139,6 +148,9 @@ class GradesPage(ctk.CTkFrame):
 
     def import_excel(self):
         if blocked():
+            return
+        if not self.subjects.get(self.subject_cb.get()):
+            messagebox.showinfo("Notes", "Cette classe n'a aucune matière : créez-en dans la page « Matières ».")
             return
         if not self.rows:
             messagebox.showinfo("Import", "Sélectionnez une classe contenant des élèves.")

@@ -4,15 +4,15 @@ from app.calculations.grades import student_result
 from app.calculations.rankings import rank_categories, rank_students, rank_subjects
 from app.calculations.statistics import class_stats
 from app.database.queries import cur_year
-from app.repositories import class_repository, grade_repository, student_repository, subject_repository
+from app.repositories import class_repository, class_subject_repository, grade_repository, student_repository
 
 
 def compute_class(cid, per):
-    """-> (résultats {student_id: {...}}, matières, statistiques de la classe)."""
+    """-> (résultats {student_id: {...}}, matières de la classe, statistiques de la classe)."""
     cl = class_repository.get(cid)
     y = cl.annee_id if cl else cur_year()
     studs = student_repository.ids_by_class(cid)
-    subs = subject_repository.by_year(y)
+    subs = class_subject_repository.for_class(cid, y)       # matières et coefficients propres à la classe
     by_student = defaultdict(dict)
     for g in grade_repository.for_class(cid, per):
         by_student[g["student_id"]][g["subject_id"]] = g

@@ -1,6 +1,6 @@
 """Rendu PDF (A4 portrait, imprimable) du bulletin scolaire de notes, avec reportlab.
 
-Ce module ne dépend d'aucune autre partie de l'application : il reçoit des dictionnaires
+Ce module ne dépend d'aucune autre partie de l'application (hors app/reports/security.py) : il reçoit des dictionnaires
 déjà formatés (voir `app/services/bulletin_service.py`, fonction `build_bulletins`) et
 écrit un PDF contenant une page par élève.
 """
@@ -16,12 +16,14 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph, Table, TableStyle
 
+from app.utils import security
+
 PW, PH = A4
-M = 26                      # marge de la page
-X0, X1 = M, PW - M          # cadre extérieur
+M = 26
+X0, X1 = M, PW - M
 INNER_X, INNER_W = M + 2, 539
-BOX_H = 128                 # hauteur du bloc Distinctions / Décision / Visa
-FOOT_H = 18                 # hauteur réservée au pied de page
+BOX_H = 128
+FOOT_H = 18
 GREY = colors.Color(0.90, 0.90, 0.90)
 GREY2 = colors.Color(0.80, 0.80, 0.80)
 SERIF_B = "Times-Bold"
@@ -99,6 +101,11 @@ def _info(c, b, y):
         c.setFont("Helvetica-Bold", 10)
         c.drawString(X0 + 98, yy, _fit(val, "Helvetica-Bold", 10, 230))
         yy -= 14
+    if b.get("code"):
+        c.setFont("Helvetica-Bold", 8.5)
+        c.drawString(X0 + 340, y - 13, "N° du bulletin :")
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(X0 + 420, y - 13, b["code"])
     yy = y - 27
     for lab, val in rows_r:
         if val in ("", None):
@@ -253,6 +260,8 @@ def _bottom(c, b, y0):
 
 
 def draw_bulletin(c, b):
+    security.draw_copy_pattern(c, PW, PH)                          # fond anti-photocopie
+    security.draw_logo_watermark(c, b["header"].get("logo"), b["header"].get("ecole"), PW, PH)
     top = PH - M - 6
     y = _header(c, b, top)
     y = _info(c, b, y)
@@ -275,7 +284,7 @@ def draw_bulletin(c, b):
 
 
 def write_pdf(path, bulletins, title="Bulletins"):
-    c = canvas.Canvas(path, pagesize=A4)
+    c = canvas.Canvas(path, pagesize=A4, pageCompression=1)
     c.setTitle(title)
     c.setAuthor("EduManager")
     for b in bulletins:

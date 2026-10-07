@@ -60,6 +60,8 @@ class BulletinPage(ctk.CTkFrame):
             self.dis[k].pack(fill="x", padx=14)
         button(sc, "Bulletin de l'élève", lambda: self.generate(False), ic="file").pack(fill="x", padx=14, pady=(18, 6))
         button(sc, "Bulletins de toute la classe", lambda: self.generate(True), "light", ic="layers").pack(fill="x", padx=14)
+        button(sc, "Vérifier un numéro de bulletin", self.verify_code, "light", ic="lock").pack(
+            fill="x", padx=14, pady=(18, 6))
 
     def refresh(self):
         self.classes = class_repository.options(cur_year())
@@ -128,7 +130,31 @@ class BulletinPage(ctk.CTkFrame):
             ids, name = [sid], f"Bulletin_{self.student_cb.get()}_{per}"
         try:
             bulletin_service.generate(ids, cid, per, name)
-        except ImportError:
-            messagebox.showerror("Bulletin", "Le module reportlab est requis :  pip install reportlab")
+        except ImportError as ex:
+            pkg = {"PIL": "pillow"}.get(ex.name, ex.name or "reportlab pillow")
+            messagebox.showerror("Bulletin", f"Un module est requis :  pip install {pkg}")
         except Exception as ex:
             messagebox.showerror("Bulletin", f"Échec de la génération du bulletin :\n{ex}")
+
+    def verify_code(self):
+        """Contrôle d'authenticité : le numéro imprimé sur le bulletin doit exister en base."""
+        code = ctk.CTkInputDialog(text="Saisissez le numéro imprimé sur le bulletin (BUL-XXXX-XXXX-XXXX) :",
+                                  title="Vérifier un bulletin").get_input()
+        if not code:
+            return
+        info = bulletin_service.verify(code)
+        if not info:
+            messagebox.showwarning("Vérification", "Numéro inconnu : aucun bulletin portant ce numéro n'a été édité "
+                                                   "par cette application (ou le numéro est mal saisi).\n\n"
+                                                   "Le document est peut-être falsifié.")
+            return
+        moy = "—" if info["moyenne"] is None else f"{info['moyenne']:.2f}"
+        rang = f"{info['rang']} / {info['effectif']}" if info["rang"] else "—"
+        messagebox.showinfo("Bulletin enregistré",
+                            f"Numéro : {info['code']}\n"
+                            f"Élève : {info['eleve']}\nClasse : {info['classe']}\n"
+                            f"Période : {info['periode']}  ({info['annee']})\n"
+                            f"Moyenne : {moy}    Rang : {rang}\n\n"
+                            f"Émis le : {info['created_at']}\nDernière édition : {info['updated_at']} "
+                            f"({info['prints']} édition(s))\n\n"
+                            "Comparez ces informations avec celles du document papier.")

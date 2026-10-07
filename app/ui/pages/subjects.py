@@ -10,6 +10,7 @@ from app.ui.components.buttons import button
 from app.ui.components.card import label
 from app.ui.components.data_table import CrudPage, DataTable
 from app.ui.components.inputs import entry
+from app.ui.pages.class_subjects import open_class_subjects
 
 
 class CategoriesDialog(ctk.CTkToplevel):
@@ -138,9 +139,10 @@ def subjects_page(master):
         dict(key="nom", label="Nom de la matière", type="entry", required=True),
         dict(key="code", label="Abréviation", type="entry", placeholder="Ex : MATHS"),
         dict(key="categorie_id", label="Catégorie", type="fk", options=category_repository.options),
-        dict(key="coefficient", label="Coefficient", type="number", required=True, placeholder="Ex : 2"),
+        dict(key="coefficient", label="Coefficient par défaut", type="number", required=True, placeholder="Ex : 2"),
     ]
     return CrudPage(master, "Liste des matières", "subjects", fields, subject_repository.LIST_SQL,
                     [("Matière", 220), ("Abréviation", 100), ("Catégorie", 130), ("Coefficient", 90)],
                     list_params=year_params, insert_extra=year_extra,
-                    actions=[("Catégories", open_categories, "light", "layers")])
+                    actions=[("Catégories", open_categories, "light", "layers"),
+                             ("Matières par classe", open_class_subjects, "light", "school")])

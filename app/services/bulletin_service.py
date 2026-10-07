@@ -5,7 +5,8 @@ import datetime
 from app.calculations.statistics import seuil_decisions
 from app.constants import PERIODES
 from app.database.connection import query
-from app.repositories import class_repository, grade_repository, schedule_repository, student_repository
+from app.repositories import (bulletin_repository, class_repository, grade_repository, schedule_repository,
+                              student_repository)
 from app.reports.bulletin import write_pdf
 from app.services.grade_service import compute_class
 from app.services.settings_service import get_settings, logo_data_uri
@@ -137,7 +138,7 @@ def build_bulletins(ids, cid, per):
                   ecole=_first(S, "ecole_nom"), logo=logo)
     chef = _first(S, "directeur")
 
-    bulletins = []
+    bulletins, records = [], []
     for sid in ids:
         stu = student_repository.get(sid)
         r = res.get(sid, dict(subjects={}, categories={}, moy=None, rang=None))
@@ -175,9 +176,10 @@ def build_bulletins(ids, cid, per):
             groups.append(dict(title=title, rows=rows, avg=avg))
 
         dc = seuil_decisions(moy)
+        eleve = f"{_g(stu, 'nom').upper()} {_g(stu, 'prenom')}".strip()
         bulletins.append(dict(
             header=header,
-            student=dict(nom=f"{_g(stu, 'nom').upper()} {_g(stu, 'prenom')}".strip(),
+            student=dict(nom=eleve,
                          sexe={"M": "Masculin", "F": "Féminin"}.get(sexe, ""),
                          classe=str(_g(cl, "nom")).upper(), annee=_first(S, "annee"),
                          statut=_first(stu, "statut"), effectif=effectif, periode=per),
@@ -188,7 +190,14 @@ def build_bulletins(ids, cid, per):
                         ("Sanctions :", str(_g(d, "sanctions", "")) if d else ""),
                         ("Mérites :", str(_g(d, "merites", "")) if d else ""),
                         ("Exclusions :", str(_g(d, "exclusions", "")) if d else "")],
-            decision=mention(moy) or "", titulaire=titulaire, chef=chef, date=today))
+            decision=mention(moy) or "", titulaire=titulaire, chef=chef, date=today, code=None))
+        records.append(dict(student_id=sid, annee_id=_g(cl, "annee_id", None), periode=per, eleve=eleve,
+                            classe=str(_g(cl, "nom")), annee=_first(S, "annee"), moyenne=moy, rang=r["rang"],
+                            effectif=effectif))
+
+    # Numéro unique par bulletin (enregistré en base : même numéro si on réimprime le même bulletin)
+    for b, code in zip(bulletins, bulletin_repository.issue_batch(records)):
+        b["code"] = code
     return bulletins
 
 
@@ -203,3 +212,8 @@ def generate(ids, cid, per, name):
         write_pdf(path, bulletins, title=name)
     open_file(path)
     return path
+
+
+def verify(code):
+    """Informations enregistrées pour un numéro de bulletin (None si inconnu)."""
+    return bulletin_repository.lookup(code)
