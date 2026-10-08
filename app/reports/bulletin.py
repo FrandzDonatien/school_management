@@ -14,16 +14,15 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Paragraph, Table, TableStyle
-
+from reportlab.platypus import Image as RLImage, Paragraph, Table, TableStyle
 from app.utils import security
 
 PW, PH = A4
-M = 26
-X0, X1 = M, PW - M
+M = 26                      # marge de la page
+X0, X1 = M, PW - M          # cadre extérieur
 INNER_X, INNER_W = M + 2, 539
-BOX_H = 128
-FOOT_H = 18
+BOX_H = 128                 # hauteur du bloc Distinctions / Décision / Visa
+FOOT_H = 18                 # hauteur réservée au pied de page
 GREY = colors.Color(0.90, 0.90, 0.90)
 GREY2 = colors.Color(0.80, 0.80, 0.80)
 SERIF_B = "Times-Bold"
@@ -64,59 +63,94 @@ def _checkbox(c, x, y, checked):
 
 
 # ----------------------------------------------------------------------------- en-tête
+# Trois cadres séparés comme sur le bulletin papier : 1) ministère / logo / République, 2) école, année et titre,
+# 3) informations de l'élève.
+GAP = 3                      # espace entre les cadres
+HEAD_MIN_H, TITLE_H, INFO_H = 72, 60, 52
+LEFT_W = 134                 # largeur du bloc ministère / direction (la direction régionale passe sur 2 lignes)
+STARS = "<font name='Times-Bold' size='6.5'>*** *** ***</font>"
+_STATUT_F = {"nouveau": "Nouvelle", "redoublant": "Redoublante", "ancien": "Ancienne"}
+
+
+def _box(c, y_top, h):
+    c.setLineWidth(0.8)
+    c.rect(INNER_X, y_top - h, INNER_W, h)
+
+
 def _header(c, b, ytop):
+    """Cadre ministère / logo / République, puis cadre « école – année scolaire – titre ». Retourne le y du bas."""
     h = b["header"]
-    left = ("<font name='Helvetica-Bold' size='10.5'>%s</font><br/><font size='7.5'>%s</font>"
-            "<br/><br/><font size='7.5'>%s</font>") % (escape(h["republique"]), escape(h["devise"]),
-                                                       escape(h["ministere"]))
-    _draw_par(c, _p(left, align=TA_LEFT, raw=True, leading=11), X0 + 8, ytop, 195)
-    right = "<br/>".join(escape(t) for t in (h["direction"], h["inspection"]) if t)
-    if right:
-        _draw_par(c, _p(right, 8, align=TA_CENTER, raw=True, leading=10.5, font="Helvetica-Oblique"),
-                  X1 - 8 - 190, ytop, 190)
+    # gauche : ministère, direction régionale, inspection (centrés, séparés par des étoiles)
+    items = [t for t in (h.get("ministere"), h.get("direction"), h.get("inspection")) if t]
+    html = ""
+    for i, t in enumerate(items):
+        if i:
+            html += "<br/>" + STARS + "<br/>" + ("<font size='5'>&nbsp;</font><br/>" if i == len(items) - 1 and i > 1 else "")
+        html += escape(t)
+    left = _p(html, 8.5, align=TA_CENTER, raw=True, leading=10.2, font="Times-Roman") if items else None
+    # droite : République + devise nationale
+    devise = (h.get("devise") or "").replace(" - ", "-")
+    right = _p("%s<br/>%s" % (escape((h.get("republique") or "").upper()), escape(devise)), 9, align=TA_CENTER,
+               raw=True, leading=11.5, font="Times-Roman")
+    lh = left.wrap(LEFT_W, 1000)[1] if left else 0
+    rh = right.wrap(130, 1000)[1]
+    box_h = max(HEAD_MIN_H, lh + 12, rh + 12)
+    _box(c, ytop, box_h)
+    if left:
+        left.drawOn(c, INNER_X + 93 - LEFT_W / 2, ytop - 6 - lh)
+    right.drawOn(c, INNER_X + INNER_W - 8 - 130, ytop - 6 - rh)
+    cx = PW / 2
     if h.get("logo"):
         try:
-            c.drawImage(ImageReader(io.BytesIO(h["logo"])), PW / 2 - 31, ytop - 62, 62, 62,
+            c.drawImage(ImageReader(io.BytesIO(h["logo"])), cx - 27, ytop - 4 - 54, 54, 54,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
             pass
-    c.setFont(SERIF_B, 23)
-    c.drawCentredString(PW / 2, ytop - 82, "Bulletin Scolaire de Notes")
-    c.setFont(SERIF_B, 18)
-    c.drawCentredString(PW / 2, ytop - 104, _fit(h["ecole"], SERIF_B, 18, 480))
-    return ytop - 112
+    if h.get("motto"):
+        c.setFont("Times-Roman", 6.5)
+        c.drawCentredString(cx, ytop - box_h + 5, str(h["motto"]).upper())
+
+    # cadre titre : établissement, année scolaire, période
+    top = ytop - box_h - GAP
+    _box(c, top, TITLE_H)
+    s = b["student"]
+    c.setFont(SERIF_B, 19)
+    c.drawCentredString(cx, top - 22, _fit(h.get("ecole", ""), SERIF_B, 19, 440))
+    c.setFont(SERIF_B, 10.5)
+    c.drawCentredString(cx, top - 37, "ANNÉE SCOLAIRE : " + str(s.get("annee", "")))
+    c.setFont(SERIF_B, 12.5)
+    c.drawCentredString(cx, top - 53, "Bulletin de notes du " + str(s.get("periode", "")))
+    return top - TITLE_H - GAP
 
 
 def _info(c, b, y):
+    """Cadre des informations de l'élève (nom, sexe, statut à gauche ; numéro, classe, effectif à droite)."""
     s = b["student"]
-    c.setLineWidth(0.8)
-    c.line(X0, y, X1, y)
-    rows_l = [("Nom de l'élève :", s["nom"]), ("Sexe :", s["sexe"]), ("Classe :", s["classe"]),
-              ("Année Scolaire :", s["annee"])]
-    rows_r = [("Statut :", s["statut"]), ("Effectif :", s["effectif"]), ("Période :", s["periode"])]
-    yy = y - 13
-    for lab, val in rows_l:
-        c.setFont("Helvetica-Bold", 8.5)
-        c.drawString(X0 + 8, yy, lab)
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(X0 + 98, yy, _fit(val, "Helvetica-Bold", 10, 230))
-        yy -= 14
+    _box(c, y, INFO_H)
+    x = INNER_X + 8
+    statut = s.get("statut") or ""
+    if s.get("sexe") == "Féminin":
+        statut = _STATUT_F.get(statut.strip().lower(), statut)
+    c.setFont("Times-Italic", 9.5)
+    c.drawString(x, y - 16, "Nom et Prénoms de l'Élève :")
+    c.setFont("Times-Bold", 11.5)
+    c.drawString(INNER_X + 150, y - 16, _fit(s.get("nom", ""), "Times-Bold", 11.5, 190))
     if b.get("code"):
-        c.setFont("Helvetica-Bold", 8.5)
-        c.drawString(X0 + 340, y - 13, "N° du bulletin :")
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(X0 + 420, y - 13, b["code"])
-    yy = y - 27
-    for lab, val in rows_r:
-        if val in ("", None):
-            yy -= 14
-            continue
-        c.setFont("Helvetica-Bold", 8.5)
-        c.drawString(X0 + 340, yy, lab)
-        c.setFont("Helvetica", 9.5)
-        c.drawString(X0 + 392, yy, _fit(val, "Helvetica", 9.5, 120))
-        yy -= 14
-    return y - 60
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(INNER_X + 350, y - 16, "N° du bulletin :")
+        c.setFont("Helvetica-Bold", 9.5)
+        c.drawString(INNER_X + 415, y - 16, b["code"])
+    for yy, lab, val, lab2, val2 in ((y - 32, "Sexe :", s.get("sexe", ""), "Classe :", s.get("classe", "")),
+                                     (y - 45, "Statut :", statut, "Effectif :", s.get("effectif", ""))):
+        c.setFont("Times-Italic", 8.5)
+        c.drawString(x, yy, lab)
+        c.drawString(INNER_X + 372, yy, lab2)
+        c.setFont("Times-Roman", 8.5)
+        if val not in ("", None):
+            c.drawString(x + 52, yy, str(val))
+        if val2 not in ("", None):
+            c.drawString(INNER_X + 415, yy, _fit(val2, "Times-Roman", 8.5, 110))
+    return y - INFO_H - GAP
 
 
 # ----------------------------------------------------------------------------- tableau des notes
@@ -142,6 +176,7 @@ def _grade_table(c, b, y_top, avail):
         ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (1, 2), (-2, -1), "CENTER"),
+        ("ALIGN", (11, 2), (11, -1), "CENTER"),  # signature centrée sous l'appréciation
         ("FONTNAME", (1, 2), (-2, -1), "Helvetica"),
         ("FONTSIZE", (1, 2), (-2, -1), fs_num),
         ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
@@ -150,8 +185,21 @@ def _grade_table(c, b, y_top, avail):
         ("SPAN", (0, 0), (0, 1)), ("SPAN", (8, 0), (10, 0)), ("SPAN", (11, 0), (11, 1)),
     ] + [("SPAN", (i, 0), (i, 1)) for i in range(1, 8)]
 
-    def line(r, name_html, v, bold_cells=False):
+    def appr_cell(v):
+        """Appréciation, suivie de la signature de l'enseignant (réduite pour tenir dans la hauteur de la ligne)."""
         appr = _p(v.get("appr", ""), 6.8 if big else 6.2, italic=True, leading=7.8)
+        free_h = rh - 2 - 7.8 - 1
+        if not v.get("sig") or free_h < 7:
+            return appr
+        try:
+            w, h = ImageReader(io.BytesIO(v["sig"])).getSize()
+            k = min((COLS[11] - 8) / w, free_h / h)
+            return [appr, RLImage(io.BytesIO(v["sig"]), width=w * k, height=h * k)]
+        except Exception:
+            return appr
+
+    def line(r, name_html, v, bold_cells=False):
+        appr = appr_cell(v)
         return [_p(name_html, align=TA_LEFT, raw=True, leading=fs_name + 1.4),
                 v.get("interro", ""), v.get("devoir", ""), v.get("compo", ""), v.get("mg", ""),
                 v.get("coef", ""), v.get("nd", ""), v.get("rang", ""), v.get("min", ""), v.get("max", ""),
@@ -259,8 +307,9 @@ def _bottom(c, b, y0):
     c.drawCentredString(x3 + w3 / 2, y0 + 7, _fit(b["chef"], "Helvetica-Bold", 8.5, w3 - 10))
 
 
-def draw_bulletin(c, b):
-    security.draw_copy_pattern(c, PW, PH)                          # fond anti-photocopie
+def draw_bulletin(c, b, protect=True):
+    if protect:
+        security.draw_copy_pattern(c, PW, PH)                      # fond anti-photocopie
     security.draw_logo_watermark(c, b["header"].get("logo"), b["header"].get("ecole"), PW, PH)
     top = PH - M - 6
     y = _header(c, b, top)
@@ -269,9 +318,7 @@ def draw_bulletin(c, b):
     n_per = len(b["periods"])
     sum_h = 15 + 14 * n_per
     y_sum = y_boxes + BOX_H + 6
-    c.setLineWidth(0.8)
-    c.line(X0, y, X1, y)
-    th = _grade_table(c, b, y - 1, avail=(y - 1) - (y_sum + sum_h + 6))
+    th = _grade_table(c, b, y, avail=y - (y_sum + sum_h + 6))
     _summary(c, b, y_sum)
     _bottom(c, b, y_boxes)
     # cadre extérieur + pied de page
@@ -283,12 +330,13 @@ def draw_bulletin(c, b):
     c.drawRightString(X1 - 2, M + 3, "Imprimé le, " + b["date"])
 
 
-def write_pdf(path, bulletins, title="Bulletins"):
+def write_pdf(path, bulletins, title="Bulletins", preview=False):
+    """path : chemin ou objet fichier (BytesIO). preview=True : sans motif anti-photocopie (aperçu à l'écran)."""
     c = canvas.Canvas(path, pagesize=A4, pageCompression=1)
     c.setTitle(title)
     c.setAuthor("EduManager")
     for b in bulletins:
-        draw_bulletin(c, b)
+        draw_bulletin(c, b, protect=not preview)
         c.showPage()
     c.save()
     return path

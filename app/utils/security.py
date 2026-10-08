@@ -63,7 +63,10 @@ def copy_pattern(width_pt, height_pt):
     b = Image.new("L", (half, half), 255)
     ImageDraw.Draw(b).rectangle([1, 1, 2, 2], fill=big)
 
-    page = Image.composite(_tile(b, w, h), _tile(a, w, h), _word_mask(w, h))
+    if COPY_WORD:
+        page = Image.composite(_tile(b, w, h), _tile(a, w, h), _word_mask(w, h))
+    else:
+        page = _tile(a, w, h)
     return ImageReader(page)
 
 

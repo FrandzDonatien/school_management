@@ -15,7 +15,7 @@ BACKUP_KEEP = 10
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 ICONS_DIR = os.path.join(ASSETS_DIR, "icons")
 IMAGES_DIR = os.path.join(ASSETS_DIR, "images")
-
+SIGNATURES_DIR = os.path.join(ASSETS_DIR, "signatures")  # une image par enseignant (signature du bulletin)
 EXPORTS_DIR = os.path.join(BASE_DIR, "exports")
 BULLETINS_DIR = os.path.join(EXPORTS_DIR, "bulletins")
 SCHEDULE_DIR = os.path.join(EXPORTS_DIR, "emplois_du_temps")
@@ -25,5 +25,5 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, "app", "reports", "templates")
 
 
 def ensure_dirs():
-    for d in (DATA_DIR, BACKUP_DIR, ASSETS_DIR, ICONS_DIR, IMAGES_DIR, BULLETINS_DIR, SCHEDULE_DIR, EXCEL_DIR):
+    for d in (DATA_DIR, BACKUP_DIR, ASSETS_DIR, ICONS_DIR, IMAGES_DIR, BULLETINS_DIR, SCHEDULE_DIR, EXCEL_DIR,SIGNATURES_DIR):
         os.makedirs(d, exist_ok=True)

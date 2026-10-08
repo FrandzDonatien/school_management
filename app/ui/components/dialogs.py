@@ -97,3 +97,83 @@ class ExportDialog(ctk.CTkToplevel):
         fmt_ = self.fmt.get()
         self.destroy()
         self.on_export(scope, cid, tid, fmt_)
+
+class PdfPreviewDialog(ctk.CTkToplevel):
+    """Aperçu d'un PDF dans l'application, avant son enregistrement (rendu : pypdfium2 ou PyMuPDF).
+
+    on_save() est appelée par le bouton d'enregistrement ; elle doit renvoyer True si tout s'est bien passé
+    (l'aperçu se ferme alors)."""
+    ZOOMS = [0.7, 0.85, 1.0, 1.15, 1.3, 1.5, 1.75]
+    A4_WIDTH = 595            # largeur d'une page A4 en points : zoom 1,0 = 595 px à l'écran
+
+    def __init__(self, master, pdf_bytes, title, on_save, save_text="Enregistrer et ouvrir"):
+        from app.utils.pdf_preview import PdfPages
+        pages = PdfPages(pdf_bytes)  # lève ImportError (name='pypdfium2') si aucun moteur de rendu n'est installé
+        super().__init__(master)
+        self.doc = pages
+        self.n, self.i, self.zi, self.on_save = len(pages), 0, 3, on_save
+        self.photo = None
+        self.title(f"Aperçu — {title}")
+        self.geometry("900x880")
+        self.minsize(700, 560)
+        self.configure(fg_color="#E8EDF3")
+
+        bar = ctk.CTkFrame(self, fg_color="white", corner_radius=0, height=60)
+        bar.pack(fill="x")
+        bar.pack_propagate(False)
+        self.prev_b = button(bar, "", lambda: self.step(-1), "light", ic="chev-l", width=44)
+        self.prev_b.pack(side="left", padx=(16, 4), pady=10)
+        self.page_lbl = label(bar, "", 12, True)
+        self.page_lbl.pack(side="left", padx=8)
+        self.next_b = button(bar, "", lambda: self.step(1), "light", ic="chev-r", width=44)
+        self.next_b.pack(side="left", padx=(4, 18))
+        button(bar, "−", lambda: self.zoom(-1), "light", width=40).pack(side="left", padx=2)
+        button(bar, "+", lambda: self.zoom(1), "light", width=40).pack(side="left", padx=2)
+        button(bar, save_text, self.save, ic="save").pack(side="right", padx=(8, 16), pady=10)
+        button(bar, "Fermer", self.close, "light", ic="x").pack(side="right", pady=10)
+
+        self.scroll = ctk.CTkScrollableFrame(self, fg_color="#CBD5E1", corner_radius=0)
+        self.scroll.pack(fill="both", expand=True)
+        self.img_lbl = ctk.CTkLabel(self.scroll, text="")
+        self.img_lbl.pack(pady=14)
+        self.show()
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.bind("<Left>", lambda e: self.step(-1))
+        self.bind("<Right>", lambda e: self.step(1))
+        self.transient(master.winfo_toplevel())
+        self.after(150, self.grab_set)
+
+    def show(self):
+        z, sharp = self.ZOOMS[self.zi], 1.5          # rendu 1,5x plus fin que l'affichage pour rester net
+        img = self.doc.render(self.i, round(self.A4_WIDTH * z * sharp))
+        self.photo = ctk.CTkImage(light_image=img, size=(round(img.width / sharp), round(img.height / sharp)))
+        self.img_lbl.configure(image=self.photo)
+        self.page_lbl.configure(text=f"Page {self.i + 1} / {self.n}")
+        self.prev_b.configure(state="normal" if self.i > 0 else "disabled")
+        self.next_b.configure(state="normal" if self.i < self.n - 1 else "disabled")
+        try:
+            self.scroll._parent_canvas.yview_moveto(0)
+        except Exception:
+            pass
+
+    def step(self, d):
+        j = max(0, min(self.n - 1, self.i + d))
+        if j != self.i:
+            self.i = j
+            self.show()
+
+    def zoom(self, d):
+        j = max(0, min(len(self.ZOOMS) - 1, self.zi + d))
+        if j != self.zi:
+            self.zi = j
+            self.show()
+
+    def save(self):
+        if self.on_save():
+            self.close()
+
+    def close(self):
+        try:
+            self.doc.close()
+        finally:
+            self.destroy()

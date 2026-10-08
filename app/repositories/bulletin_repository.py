@@ -64,6 +64,16 @@ def issue_batch(records):
                     codes.append(code)
     return codes
 
+def peek_batch(records):
+    """Numéros déjà attribués (None si le bulletin n'a jamais été édité), sans rien modifier en base."""
+    out = []
+    with closing(_connect()) as conn:
+        for r in records:
+            row = conn.execute("SELECT code FROM bulletin_codes WHERE student_id=? AND annee_id=? AND periode=?",
+                               (r["student_id"], r.get("annee_id") or 0, r["periode"])).fetchone()
+            out.append(row["code"] if row else None)
+    return out
+
 
 def normalize(text):
     """« bul 7k3f 9qxm 2pwd » -> « BUL-7K3F-9QXM-2PWD » (None si le format est invalide)."""

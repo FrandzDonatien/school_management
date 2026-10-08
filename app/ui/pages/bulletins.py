@@ -8,9 +8,11 @@ from app.services import bulletin_service, grade_service
 from app.ui.components.buttons import button
 from app.ui.components.card import card, label
 from app.ui.components.data_table import DataTable
-from app.ui.components.dialogs import blocked
+from app.ui.components.dialogs import PdfPreviewDialog, blocked
 from app.ui.components.inputs import entry, labeled_combo
 from app.utils.formatting import fmt, mention
+
+_PIP = {"PIL": "pillow", "pypdfium2": "pypdfium2", "reportlab": "reportlab"}
 
 
 class BulletinPage(ctk.CTkFrame):
@@ -114,6 +116,7 @@ class BulletinPage(ctk.CTkFrame):
         grade_service.save_discipline(sid, per, {k: e.get().strip() for k, e in self.dis.items()})
 
     def generate(self, whole_class):
+        """Ouvre l'aperçu du (des) bulletin(s) ; le PDF n'est enregistré qu'après confirmation dans l'aperçu."""
         sid, per, cid = self.current()
         if not cid or (not whole_class and not sid):
             messagebox.showwarning("Bulletin", "Sélectionnez une classe et un élève.")
@@ -126,15 +129,28 @@ class BulletinPage(ctk.CTkFrame):
                 messagebox.showwarning("Bulletin", "Cette classe ne contient aucun élève.")
                 return
             name = f"Bulletins_{self.class_cb.get()}_{per}"
+            save_text = f"Enregistrer les {len(ids)} bulletins"
         else:
             ids, name = [sid], f"Bulletin_{self.student_cb.get()}_{per}"
+            save_text = "Enregistrer et ouvrir"
         try:
-            bulletin_service.generate(ids, cid, per, name)
+            pdf = bulletin_service.preview(ids, cid, per, name)
+            PdfPreviewDialog(self, pdf, name, on_save=lambda: self.save_pdf(ids, cid, per, name),
+                             save_text=save_text)
         except ImportError as ex:
-            pkg = {"PIL": "pillow"}.get(ex.name, ex.name or "reportlab pillow")
+            pkg = _PIP.get(ex.name, ex.name or "reportlab pillow pypdfium2")
             messagebox.showerror("Bulletin", f"Un module est requis :  pip install {pkg}")
         except Exception as ex:
-            messagebox.showerror("Bulletin", f"Échec de la génération du bulletin :\n{ex}")
+            messagebox.showerror("Bulletin", f"Échec de la préparation du bulletin :\n{ex}")
+
+    def save_pdf(self, ids, cid, per, name):
+        """Appelée par le bouton d'enregistrement de l'aperçu : attribue les numéros, écrit et ouvre le PDF."""
+        try:
+            bulletin_service.generate(ids, cid, per, name)
+        except Exception as ex:
+            messagebox.showerror("Bulletin", f"Échec de l'enregistrement du bulletin :\n{ex}")
+            return False
+        return True
 
     def verify_code(self):
         """Contrôle d'authenticité : le numéro imprimé sur le bulletin doit exister en base."""

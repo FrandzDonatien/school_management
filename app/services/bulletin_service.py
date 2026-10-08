@@ -1,6 +1,7 @@
-"""Bulletins de notes : préparation des données et génération du PDF imprimable."""
+"""Bulletins de notes : préparation des données, aperçu et génération du PDF imprimable."""
 import base64
 import datetime
+import io
 
 from app.calculations.statistics import seuil_decisions
 from app.constants import PERIODES
@@ -11,7 +12,8 @@ from app.reports.bulletin import write_pdf
 from app.services.grade_service import compute_class
 from app.services.settings_service import get_settings, logo_data_uri
 from app.utils.files import open_file, pdf_path
-from app.utils.formatting import fmt, mention, rang_fr
+from app.utils import signature
+from app.utils.formatting import fmt, mention, person, rang_fr
 
 # --- Réglages du bulletin -------------------------------------------------------------------
 REPUBLIQUE = "République Togolaise"
@@ -25,6 +27,9 @@ _UNCHECKED = {"", "non", "no", "-", "—", "–", "false", "0", "☐", "✗", "�
 
 # Une ligne « Moyenne <catégorie> » n'est affichée que si la catégorie compte au moins ce nombre de matières
 MIN_SUBJECTS_FOR_AVERAGE = 2
+
+# Numéro affiché sur l'aperçu d'un bulletin pas encore enregistré (il est attribué à l'enregistrement)
+PREVIEW_CODE = "BUL-????-????-????"
 # ----------------------------------------------------------------------------------------------
 
 
@@ -107,11 +112,16 @@ def _periods_block(cid, per, sid, cache):
     return out
 
 
-def build_bulletins(ids, cid, per):
+def build_bulletins(ids, cid, per, issue=True):
+    """Données des bulletins. issue=False : aperçu, rien n'est écrit en base (pas de nouveau numéro)."""
     S = get_settings()
     res, subs, stats = compute_class(cid, per)
     cl = class_repository.get(cid)
-    teachers = {s["id"]: teacher_name(cid, s["id"]) for s in subs}
+    teachers, sigs = {}, {}      # nom et signature (image) de l'enseignant de chaque matière
+    for s in subs:
+        t = schedule_repository.teacher_of(cid, s["id"])
+        teachers[s["id"]] = person(t["nom"], t["prenom"]) if t else ""
+        sigs[s["id"]] = signature.load_bytes(t["nom"], t["prenom"]) if t else None
     titulaire = titulaire_name(cl)
     logo = _logo_bytes()
     cache = {per: (res, subs, stats)}
@@ -157,7 +167,7 @@ def build_bulletins(ids, cid, per):
             for s in gsubs:
                 x = r["subjects"].get(s["id"])
                 mn, mx, av = sub_stats[s["id"]]
-                v = dict(name=_short(s), teacher=teachers.get(s["id"], "") or "",
+                v = dict(name=_short(s), teacher=teachers.get(s["id"], "") or "", sig=sigs.get(s["id"]),
                          coef=f"{(x['coef'] if x else _g(s, 'coefficient', 0)):g}",
                          min=fmt(mn), max=fmt(mx), moy=fmt(av))
                 if x:
@@ -195,10 +205,22 @@ def build_bulletins(ids, cid, per):
                             classe=str(_g(cl, "nom")), annee=_first(S, "annee"), moyenne=moy, rang=r["rang"],
                             effectif=effectif))
 
-    # Numéro unique par bulletin (enregistré en base : même numéro si on réimprime le même bulletin)
-    for b, code in zip(bulletins, bulletin_repository.issue_batch(records)):
+    # Numéro unique par bulletin (enregistré en base : même numéro si on réimprime le même bulletin).
+    # Aperçu : on affiche le numéro existant, sinon un numéro provisoire, sans rien écrire.
+    if issue:
+        codes = bulletin_repository.issue_batch(records)
+    else:
+        codes = [c or PREVIEW_CODE for c in bulletin_repository.peek_batch(records)]
+    for b, code in zip(bulletins, codes):
         b["code"] = code
     return bulletins
+
+
+def preview(ids, cid, per, name):
+    """PDF en mémoire (octets) pour l'aperçu avant enregistrement : aucun fichier créé, aucun numéro attribué."""
+    buf = io.BytesIO()
+    write_pdf(buf, build_bulletins(ids, cid, per, issue=False), title=name)
+    return buf.getvalue()
 
 
 def generate(ids, cid, per, name):

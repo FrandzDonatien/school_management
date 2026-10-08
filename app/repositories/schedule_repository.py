@@ -58,6 +58,15 @@ def teacher_name(class_id, subject_id):
                  WHERE sc.class_id=? AND sc.subject_id=? LIMIT 1""", (class_id, subject_id))
     return r[0]["n"] if r else ""
 
+def teacher_of(class_id, subject_id):
+    """Enseignant (id, nom, prenom) d'une matière dans une classe : affectation, sinon emploi du temps."""
+    r = query("""SELECT t.id, t.nom, t.prenom FROM assignments a JOIN teachers t ON t.id=a.teacher_id
+                 WHERE a.class_id=? AND a.subject_id=?""", (class_id, subject_id))
+    if not r:
+        r = query("""SELECT t.id, t.nom, t.prenom FROM schedule sc JOIN teachers t ON t.id=sc.teacher_id
+                     WHERE sc.class_id=? AND sc.subject_id=? LIMIT 1""", (class_id, subject_id))
+    return r[0] if r else None
+
 
 def load_rows(default_hours, year):
     return query("""SELECT t.id, TRIM(t.nom||' '||t.prenom) AS n,
