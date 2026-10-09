@@ -6,7 +6,17 @@ from app.database.queries import is_read_only
 from app.ui.components.buttons import button
 from app.ui.components.card import label
 from app.ui.components.inputs import combo
+from pathlib import Path
+import sys
 
+def resource_path(relative_path):
+    """Retourne le chemin d'une ressource en développement ou après compilation."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).resolve().parents[3]
+
+    return base_path / relative_path
 
 def blocked(show=True):
     """True si l'année affichée n'est pas l'année active (lecture seule)."""
@@ -26,6 +36,7 @@ class ProgressDialog(ctk.CTkToplevel):
         super().__init__(master)
         self.title(title)
         self.geometry("430x200")
+        self.iconbitmap(str(resource_path("assets/EduManager_fixed.ico")))
         self.resizable(False, False)
         self.configure(fg_color="white")
         self.transient(master.winfo_toplevel())
@@ -50,6 +61,7 @@ class ExportDialog(ctk.CTkToplevel):
     def __init__(self, master, classes, teachers, scope, cls_name, teacher_name_, on_export):
         super().__init__(master)
         self.title("Exporter les emplois du temps")
+        self.iconbitmap(str(resource_path("assets/EduManager_fixed.ico")))
         self.geometry("500x540")
         self.resizable(False, False)
         self.configure(fg_color="white")
@@ -77,7 +89,7 @@ class ExportDialog(ctk.CTkToplevel):
         self.fmt = ctk.StringVar(value="xlsx")
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(anchor="w", padx=28, pady=(4, 0))
-        for text, v in (("Excel (.xlsx)", "xlsx"), ("PDF / page imprimable", "html")):
+        for text, v in (("Excel (.xlsx)", "xlsx"), ("PDF (.pdf)", "pdf")):
             ctk.CTkRadioButton(row, text=text, variable=self.fmt, value=v, fg_color=C["primary"], font=(FONT, 12),
                                text_color=C["text"]).pack(side="left", padx=(0, 20))
         btns = ctk.CTkFrame(self, fg_color="transparent")
@@ -114,6 +126,7 @@ class PdfPreviewDialog(ctk.CTkToplevel):
         self.n, self.i, self.zi, self.on_save = len(pages), 0, 3, on_save
         self.photo = None
         self.title(f"Aperçu — {title}")
+        self.iconbitmap(str(resource_path("assets/EduManager_fixed.ico")))
         self.geometry("900x880")
         self.minsize(700, 560)
         self.configure(fg_color="#E8EDF3")

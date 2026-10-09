@@ -420,22 +420,57 @@ class SchedulePage(ctk.CTkFrame):
 
     def do_export(self, scope, cid, tid, fmt_):
         tables, base = export_service.build_tables(scope, cid, tid, self.cls_map, self.teachers)
+
         if not tables:
             messagebox.showinfo("Export", "Rien à exporter.")
             return
-        ext = ".xlsx" if fmt_ == "xlsx" else ".html"
+
+        formats = {
+            "xlsx": (
+                ".xlsx",
+                [("Classeur Excel", "*.xlsx")],
+            ),
+            "pdf": (
+                ".pdf",
+                [("Document PDF", "*.pdf")],
+            ),
+        }
+
+        if fmt_ not in formats:
+            messagebox.showerror(
+                "Export", f"Format non pris en charge : {fmt_}"
+            )
+            return
+
+        ext, filetypes = formats[fmt_]
         path = filedialog.asksaveasfilename(
-            defaultextension=ext, initialfile=base + ext,
-            filetypes=[("Excel", "*.xlsx")] if fmt_ == "xlsx" else [("Page web imprimable (PDF)", "*.html")])
+            title="Exporter l'emploi du temps",
+            defaultextension=ext,
+            initialfile=base + ext,
+            filetypes=filetypes,
+        )
+
         if not path:
             return
+
         try:
             export_service.write_file(path, tables, fmt_)
-        except ImportError:
-            messagebox.showerror("Export", "Le module openpyxl est requis :  pip install openpyxl\n"
-                                           "(ou exportez au format PDF / page imprimable).")
+        except ImportError as ex:
+            messagebox.showerror(
+                "Dépendance manquante",
+                f"Un module requis est absent : {ex}\n\n"
+                "Installez les dépendances avec :\n"
+                "pip install reportlab openpyxl",
+            )
             return
         except Exception as ex:
-            messagebox.showerror("Export", f"Échec de l'export :\n{ex}")
+            messagebox.showerror(
+                "Échec de l'export",
+                f"Impossible de générer le fichier :\n{ex}",
+            )
             return
-        messagebox.showinfo("Export", "Export terminé avec succès.")
+
+        messagebox.showinfo(
+            "Export terminé",
+            f"Fichier créé avec succès :\n{path}",
+        )

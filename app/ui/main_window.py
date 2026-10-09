@@ -71,9 +71,9 @@ class MainFrame(ctk.CTkFrame):
         label(header, "Année scolaire", 11, color=C["muted"]).pack(side="right", padx=(0, 8))
         ub = ctk.CTkFrame(header, fg_color="transparent")
         ub.pack(side="right", padx=(0, 18))
-        label(ub, username, 13, True).pack(anchor="e", pady=(16, 0))
-        ctk.CTkLabel(header, text=username[:2].upper(), width=42, height=42, corner_radius=21, fg_color=C["primary"],
-                     text_color="white", font=(FONT, 13, "bold")).pack(side="right", padx=12)
+        #label(ub, username, 13, True).pack(anchor="e", pady=(16, 0))
+        #ctk.CTkLabel(header, text=username[:2].upper(), width=42, height=42, corner_radius=21, fg_color=C["primary"],
+        #             text_color="white", font=(FONT, 13, "bold")).pack(side="right", padx=12)
 
         self.banner = ctk.CTkFrame(right, fg_color=C["warning_light"], corner_radius=0, height=40)
         self.banner.grid(row=1, column=0, sticky="ew")

@@ -11,6 +11,17 @@ from app.ui.components.card import label
 from app.ui.components.data_table import CrudPage, DataTable
 from app.ui.components.inputs import entry
 from app.ui.pages.class_subjects import open_class_subjects
+from pathlib import Path
+import sys
+
+def resource_path(relative_path):
+    """Retourne le chemin d'une ressource en développement ou après compilation."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).resolve().parents[3]
+
+    return base_path / relative_path
 
 
 class CategoriesDialog(ctk.CTkToplevel):
@@ -20,6 +31,7 @@ class CategoriesDialog(ctk.CTkToplevel):
         super().__init__(master)
         self.title("Catégories de matières")
         self.geometry("560x600")
+        self.iconbitmap(str(resource_path("assets/EduManager_fixed.ico")))
         self.resizable(False, False)
         self.configure(fg_color="white")
         self.on_change, self.selected = on_change, None
@@ -27,12 +39,13 @@ class CategoriesDialog(ctk.CTkToplevel):
         label(self, "Catégories de matières", 18, True).pack(anchor="w", padx=24, pady=(20, 2))
         label(self, "Elles regroupent les matières sur le bulletin, dans l'ordre de la liste.", 12,
               color=C["muted"]).pack(anchor="w", padx=24)
-        self.dt = DataTable(self, [("Catégorie", 150), ("Titre sur le bulletin", 230), ("Matières", 70)],
-                            search=False, paginate=False, height=6)
-        self.dt.pack(fill="x", padx=24, pady=12)
+        self.dt = DataTable(self,
+                            [("Catégorie", 150), ("Titre sur le bulletin", 230), ("Matières", 70)],
+                            search=False, paginate=False, height=3)
+        self.dt.pack(fill="x", padx=24, pady=(8, 2))
         self.dt.tree.bind("<<TreeviewSelect>>", self.on_select)
 
-        label(self, "Nom (ex : Littéraire)", 12, color=C["muted"]).pack(anchor="w", padx=24)
+        label(self, "Nom (ex : Littéraire)", 12, color=C["muted"]).pack(anchor="w", padx=24,pady=(0, 0))
         self.name_entry = entry(self)
         self.name_entry.pack(fill="x", padx=24, pady=(2, 8))
         label(self, "Titre sur le bulletin (ex : Matières littéraires) — facultatif", 12,

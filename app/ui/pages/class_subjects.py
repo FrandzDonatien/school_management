@@ -9,7 +9,17 @@ from app.ui.components.buttons import button
 from app.ui.components.card import label
 from app.ui.components.dialogs import blocked
 from app.ui.components.inputs import combo, entry
+from pathlib import Path
+import sys
 
+def resource_path(relative_path):
+    """Retourne le chemin d'une ressource en développement ou après compilation."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).resolve().parents[3]
+
+    return base_path / relative_path
 
 def _coef(text):
     try:
@@ -23,6 +33,7 @@ class ClassSubjectsDialog(ctk.CTkToplevel):
     def __init__(self, master, on_change):
         super().__init__(master)
         self.title("Matières par classe")
+        self.iconbitmap(str(resource_path("assets/EduManager_fixed.ico")))
         self.geometry("640x720")
         self.resizable(False, False)
         self.configure(fg_color="white")
