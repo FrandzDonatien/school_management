@@ -1,8 +1,12 @@
-"""DataTable (recherche, tri, pagination) et CrudPage (formulaire + liste générique).
+"""DataTable (recherche, tri, pagination, sélection multiple) et CrudPage (formulaire + liste générique).
 
 Le design du DataTable s'inspire des « Data Tables » de TailAdmin : barre d'outils « Afficher N lignes » +
 recherche, en-têtes avec icônes de tri, lignes aérées séparées par un filet léger, survol et sélection en
 couleur, badges de statut, pied de page « Affichage de … » avec pagination numérotée (Précédent / 1 2 3 … / Suivant).
+
+Suppression en masse : DataTable(..., on_delete=callback) ajoute une colonne de cases à cocher (avec « tout
+sélectionner » dans l'en-tête) et une barre « N sélectionné(s) · Supprimer · Désélectionner ». Le callback reçoit la
+liste des identifiants (chaînes) cochés. Sans on_delete (et selectable=False), le tableau se comporte comme avant.
 """
 import sqlite3
 import sys
@@ -57,6 +61,13 @@ def setup_style():
     s.configure("Vertical.TScrollbar", background="#E2E8F0", troughcolor="white", borderwidth=0, arrowsize=12)
 
 
+def _checkbox(parent, command=None):
+    """Case à cocher compacte, dans le style de l'application."""
+    return ctk.CTkCheckBox(parent, text="", width=22, height=22, checkbox_width=18, checkbox_height=18,
+                           corner_radius=4, border_width=2, fg_color=C["primary"], hover_color=C["primary_dark"],
+                           border_color=G300, command=command)
+
+
 class _TreeShim:
     """Compatibilité avec l'ancien ttk.Treeview : bind('<<TreeviewSelect>>'), selection(), selection_set(), ..."""
 
@@ -90,7 +101,7 @@ class _Row:
     """Une ligne réutilisable du tableau (les widgets sont créés une fois puis remplis à chaque affichage)."""
 
     def __init__(self):
-        self.frame, self.cells, self.sep = None, [], None
+        self.frame, self.cells, self.sep, self.chk = None, [], None, None
         self.iid, self.shown = None, False
         self.cache, self.paint = [], None
 
@@ -116,9 +127,11 @@ class DataTable(ctk.CTkFrame):
     SIZES = ["5", "10", "25", "50", "100"]
 
     def __init__(self, master, columns, page_size=10, search=True, paginate=True, with_id=True, height=8,
-                 badge_cols=(), badge_fn=None, empty_text="Aucun résultat"):
+                 badge_cols=(), badge_fn=None, empty_text="Aucun résultat", selectable=False, on_delete=None):
         """columns : [(titre, largeur relative)] ; si with_id, la 1re valeur de chaque ligne est l'identifiant.
-        badge_cols : titres (ou indices) des colonnes à afficher sous forme de badges colorés."""
+        badge_cols : titres (ou indices) des colonnes à afficher sous forme de badges colorés.
+        selectable : ajoute des cases à cocher (nécessite with_id). on_delete(ids) : active « Supprimer la sélection »
+        (implique selectable)."""
         super().__init__(master, fg_color="transparent")
         self.columns, self.with_id, self.paginate = columns, with_id, paginate
         self.page_size = page_size
@@ -128,11 +141,19 @@ class DataTable(ctk.CTkFrame):
         self.badge_idx = {i for i, (t, _) in enumerate(columns) if t in badge_cols or i in badge_cols}
         self.badge_fn = badge_fn or badge_style
         self.empty_text = empty_text
+        self.on_delete = on_delete
+        self.selectable = bool(with_id and (selectable or on_delete is not None))
+        self.checked = set()                       # identifiants (str) cochés, conservés entre les pages
+        self.chk_all, self.bulk, self.bulk_lbl = None, None, None
+        self.c0 = 1 if self.selectable else 0      # décalage des colonnes (la 1re est celle des cases à cocher)
         self.tree = _TreeShim(self)
         self._pool, self._hover, self._search_job = [], None, None
-        total = sum(w for _, w in columns) or 1
+        widths = [w for _, w in columns]
+        if self.selectable:
+            widths.insert(0, max(36, 0.08 * sum(widths)))
+        total = sum(widths) or 1
         self.fracs, x = [], 0
-        for _, w in columns:
+        for w in widths:
             self.fracs.append((x / total, w / total))
             x += w
         self.columnconfigure(0, weight=1)
@@ -156,7 +177,7 @@ class DataTable(ctk.CTkFrame):
 
     def _build_toolbar(self, search):
         self.search = None
-        if not (search or self.paginate):
+        if not (search or self.paginate or self.selectable):
             return
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 12))
@@ -174,6 +195,15 @@ class DataTable(ctk.CTkFrame):
                                        fg_color="transparent", text_color=C["text"], font=(FONT, 12))
             self.search.pack(side="left", padx=(4, 8), pady=1)
             self.search.bind("<KeyRelease>", lambda e: self.on_search())
+        if self.selectable:                                    # barre d'actions sur la sélection (masquée si vide)
+            self.bulk = ctk.CTkFrame(bar, fg_color=C["primary_light"], corner_radius=8)
+            self.bulk_lbl = ctk.CTkLabel(self.bulk, text="", font=(FONT, 12, "bold"), text_color=C["primary"])
+            self.bulk_lbl.pack(side="left", padx=(12, 8), pady=4)
+            if self.on_delete:
+                button(self.bulk, "Supprimer la sélection", self._delete_checked, "danger",
+                       ic="trash").pack(side="left", padx=(0, 6), pady=4)
+            button(self.bulk, "Désélectionner", self.clear_checked, "light", ic="x").pack(
+                side="left", padx=(0, 6), pady=4)
 
     def _build_table(self, height):
         s = self._s = self._scale()
@@ -184,9 +214,15 @@ class DataTable(ctk.CTkFrame):
         # en-tête (titres cliquables pour trier)
         self.head = ctk.CTkFrame(wrap, fg_color="transparent", corner_radius=0, height=HEAD_H)
         self.head.grid(row=0, column=0, sticky="ew")
+        if self.selectable:                                    # « tout sélectionner » (lignes filtrées, toutes pages)
+            fx0, fw0 = self.fracs[0]
+            hc = ctk.CTkFrame(self.head, fg_color="transparent", corner_radius=0)
+            hc.place(relx=fx0, x=0, rely=0, relheight=1, relwidth=fw0)
+            self.chk_all = _checkbox(hc, self._toggle_all)
+            self.chk_all.place(x=PAD, rely=0.5, anchor="w")
         self.head_cells = []
         for k, (title, _) in enumerate(self.columns):
-            fx, fw = self.fracs[k]
+            fx, fw = self.fracs[k + self.c0]
             cell = ctk.CTkFrame(self.head, fg_color="transparent", corner_radius=0)
             cell.place(relx=fx, x=PAD, rely=0, relheight=1, relwidth=_rw(fw))
             lab = ctk.CTkLabel(cell, text=title, font=(FONT, 12, "bold"), text_color=G600)
@@ -235,8 +271,11 @@ class DataTable(ctk.CTkFrame):
     def _new_row(self):
         row = _Row()
         row.frame = ctk.CTkFrame(self.inner, height=ROW_H, fg_color="transparent", corner_radius=0)
+        if self.selectable:
+            row.chk = _checkbox(row.frame, lambda r=row: self._toggle(r))
+            row.chk.place(relx=self.fracs[0][0], x=PAD, rely=0.5, anchor="w")
         for k in range(len(self.columns)):
-            fx, fw = self.fracs[k]
+            fx, fw = self.fracs[k + self.c0]
             if k in self.badge_idx:
                 w = ctk.CTkLabel(row.frame, text="", height=24, corner_radius=12, font=(FONT, 11, "bold"))
             else:
@@ -320,6 +359,64 @@ class DataTable(ctk.CTkFrame):
         except tk.TclError:
             pass
 
+    # ------------------------------------------------------------------ sélection multiple
+    def checked_ids(self):
+        """Identifiants (chaînes) des lignes cochées."""
+        return sorted(self.checked, key=lambda s: (len(s), s))
+
+    def clear_checked(self):
+        self.checked.clear()
+        self._refresh_checks()
+
+    def _toggle(self, row):
+        if row.iid is None or row.chk is None:
+            return
+        if row.chk.get():
+            self.checked.add(row.iid)
+        else:
+            self.checked.discard(row.iid)
+        self._sync_header()
+        self._update_bulk()
+
+    def _toggle_all(self):
+        ids = {str(r[0]) for r in self.view}
+        if self.chk_all.get():
+            self.checked |= ids
+        else:
+            self.checked -= ids
+        self._refresh_checks()
+
+    def _refresh_checks(self):
+        for r in self._pool:
+            if r.chk is not None and r.shown:
+                (r.chk.select if r.iid in self.checked else r.chk.deselect)()
+        self._sync_header()
+        self._update_bulk()
+
+    def _sync_header(self):
+        if self.chk_all is None:
+            return
+        ids = [str(r[0]) for r in self.view]
+        if ids and all(i in self.checked for i in ids):
+            self.chk_all.select()
+        else:
+            self.chk_all.deselect()
+
+    def _update_bulk(self):
+        if self.bulk is None:
+            return
+        n = len(self.checked)
+        if n:
+            self.bulk_lbl.configure(text=f"{n} sélectionné{'s' if n > 1 else ''}")
+            if not self.bulk.winfo_manager():
+                self.bulk.pack(side="left", padx=(20, 0))
+        elif self.bulk.winfo_manager():
+            self.bulk.pack_forget()
+
+    def _delete_checked(self):
+        if self.on_delete and self.checked:
+            self.on_delete(self.checked_ids())
+
     # ------------------------------------------------------------------ données
     @staticmethod
     def sort_key(v):
@@ -373,6 +470,9 @@ class DataTable(ctk.CTkFrame):
         self.page = 0
         if self.selected is not None and not self.has_id(self.selected):
             self.selected = None
+        if self.checked:                                       # on ne garde que les lignes qui existent encore
+            valid = {str(r[0]) for r in self.rows}
+            self.checked &= valid
         self.apply()
 
     def apply(self):
@@ -398,6 +498,9 @@ class DataTable(ctk.CTkFrame):
             filt = f" (filtré sur {len(self.rows)})" if n != len(self.rows) else ""
             self.info.configure(text=f"Affichage de {a + 1 if n else 0} à {a + len(shown)} sur {n} entrée(s){filt}")
             self._render_pager(pages)
+        if self.selectable:
+            self._sync_header()
+            self._update_bulk()
         self.canvas.yview_moveto(0)
         self.after_idle(self._toggle_scrollbar)
 
@@ -419,6 +522,8 @@ class DataTable(ctk.CTkFrame):
             if not r.shown:
                 r.frame.pack(fill="x")
                 r.shown = True
+            if r.chk is not None:
+                (r.chk.select if r.iid in self.checked else r.chk.deselect)()
             for k, w in enumerate(r.cells):
                 v = vals[k + off] if k + off < len(vals) else ""
                 text = "" if v is None else str(v)
@@ -429,7 +534,7 @@ class DataTable(ctk.CTkFrame):
                         if text:
                             bg, fg = self.badge_fn(text)
                             w.configure(text=text, fg_color=bg, text_color=fg)
-                            w.place(relx=self.fracs[k][0], x=PAD, rely=0.5, anchor="w")
+                            w.place(relx=self.fracs[k + self.c0][0], x=PAD, rely=0.5, anchor="w")
                         else:
                             w.place_forget()
                 elif r.cache[k] != text:
@@ -476,10 +581,12 @@ class DataTable(ctk.CTkFrame):
 
 
 class CrudPage(ctk.CTkFrame):
-    """Page générique : formulaire à gauche, liste (DataTable) à droite."""
+    """Page générique : formulaire à gauche, liste (DataTable) à droite.
+
+    bulk_delete=True (défaut) : cases à cocher + « Supprimer la sélection » dans la liste."""
 
     def __init__(self, master, title, table, fields, list_sql, columns, after_insert=None,
-                 list_params=None, insert_extra=None, actions=(), badge_cols=()):
+                 list_params=None, insert_extra=None, actions=(), badge_cols=(), bulk_delete=True):
         super().__init__(master, fg_color=C["bg"])
         self.table, self.fields, self.list_sql = table, fields, list_sql
         self.after_insert, self.list_params, self.insert_extra = after_insert, list_params, insert_extra
@@ -527,7 +634,8 @@ class CrudPage(ctk.CTkFrame):
         label(head, title, 16, True).pack(side="left")
         for text, fn, kind, ic in reversed(list(actions)):
             button(head, text, lambda fn=fn: fn(self), kind, ic=ic).pack(side="right", padx=(8, 0))
-        self.dt = DataTable(right, columns, badge_cols=badge_cols)
+        self.dt = DataTable(right, columns, badge_cols=badge_cols,
+                            on_delete=self.delete_many if bulk_delete else None)
         self.dt.grid(row=1, column=0, sticky="nsew", padx=22, pady=(0, 20))
         self.dt.tree.bind("<<TreeviewSelect>>", self.on_select)
 
@@ -629,3 +737,25 @@ class CrudPage(ctk.CTkFrame):
         if messagebox.askyesno("Confirmation", "Supprimer définitivement cet enregistrement ?"):
             execute(f"DELETE FROM {self.table} WHERE id=?", (self.selected_id,))
             self.refresh()
+
+    def delete_many(self, ids):
+        """Suppression en masse des enregistrements cochés dans la liste (ids : identifiants sous forme de chaînes)."""
+        if blocked() or not ids:
+            return
+        n = len(ids)
+        if not messagebox.askyesno("Confirmation",
+                                   f"Supprimer définitivement {n} enregistrement{'s' if n > 1 else ''} "
+                                   "sélectionné" + ("s" if n > 1 else "") + " ?\nCette action est irréversible."):
+            return
+        done = failed = 0
+        for i in ids:
+            try:
+                execute(f"DELETE FROM {self.table} WHERE id=?", (int(i),))
+                done += 1
+            except sqlite3.Error:                              # ex. enregistrement encore utilisé ailleurs
+                failed += 1
+        self.dt.clear_checked()
+        self.refresh()
+        if failed:
+            messagebox.showwarning("Suppression", f"{done} enregistrement(s) supprimé(s).\n{failed} n'ont pas pu être "
+                                                  "supprimé(s) (ils sont probablement utilisés ailleurs).")

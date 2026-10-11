@@ -1,3 +1,6 @@
+import time
+import tkinter as tk
+
 import customtkinter as ctk
 from tkinter import messagebox
 
@@ -30,10 +33,17 @@ def blocked(show=True):
 
 
 class ProgressDialog(ctk.CTkToplevel):
-    """Fenêtre d'attente indéterminée avec bouton Annuler."""
+    """Fenêtre d'attente indéterminée avec bouton Annuler.
+
+    CustomTkinter planifie des actions différées sur chaque CTkToplevel (~200 ms après sa création :
+    withdraw puis deiconify pour la couleur de la barre de titre). Détruire la fenêtre avant provoque
+    « bad window path name » : close() attend donc une durée de vie minimale."""
+    MIN_LIFE_MS = 700
 
     def __init__(self, master, title, heading, detail, on_cancel):
         super().__init__(master)
+        self._born = time.monotonic()
+        self._closing = False
         self.title(title)
         self.geometry("430x200")
         self.iconbitmap(str(resource_path("assets/EduManager_fixed.ico")))
@@ -47,14 +57,43 @@ class ProgressDialog(ctk.CTkToplevel):
         self.bar.pack(fill="x", padx=26, pady=16)
         self.bar.start()
         button(self, "Annuler", on_cancel, "light", ic="x", width=120).pack(pady=(0, 14))
-        self.after(150, self.grab_set)
+        self.after(250, self._grab)
+
+    def _grab(self):
+        if self._closing:
+            return
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
 
     def set_info(self, text):
-        self.info.configure(text=text)
+        if not self._closing:
+            try:
+                self.info.configure(text=text)
+            except tk.TclError:
+                pass
 
     def close(self):
-        self.bar.stop()
-        self.destroy()
+        if self._closing:
+            return
+        self._closing = True
+        try:
+            self.bar.stop()
+        except Exception:
+            pass
+        elapsed = int((time.monotonic() - self._born) * 1000)
+        self.after(max(0, self.MIN_LIFE_MS - elapsed), self._destroy)
+
+    def _destroy(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
 
 
 class ExportDialog(ctk.CTkToplevel):

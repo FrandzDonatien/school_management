@@ -1,11 +1,9 @@
-
 """Export des emplois du temps en PDF natif et Excel."""
 from pathlib import Path
 
 from app.constants import DAYS, PLAN
 from app.services.schedule_service import cell_data
 from app.services.settings_service import get_settings
-
 
 
 def build_tables(scope, cid, tid, cls_map, teachers):

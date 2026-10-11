@@ -1,12 +1,14 @@
+import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
-from app.constants import C
+from app.constants import C, FONT
 from app.database.queries import cur_year
 from app.repositories import class_repository, student_repository
-from app.services import student_service
+from app.services import student_service, student_export
+from app.ui.components.buttons import button
 from app.ui.components.card import label
 from app.ui.components.data_table import CrudPage
-from app.ui.components.dialogs import blocked
+from app.ui.components.dialogs import blocked, resource_path
 from app.ui.components.inputs import combo
 from app.utils.formatting import new_matricule
 
@@ -56,6 +58,88 @@ def save_template(page=None):
                                   "puis utilisez « Importer Excel ».")
 
 
+# -- export des listes de classe
+class ClassListDialog(ctk.CTkToplevel):
+    """Choix du contenu (une classe / toutes les classes) et du format (Excel / PDF)."""
+
+    def __init__(self, master, classes, current, on_export):
+        super().__init__(master)
+        self.title("Exporter les listes de classe")
+        self.iconbitmap(str(resource_path("assets/EduManager_fixed.ico")))
+        self.geometry("470x400")
+        self.resizable(False, False)
+        self.configure(fg_color="white")
+        self.classes, self.on_export = classes, on_export
+        label(self, "Exporter les listes de classe", 18, True).pack(anchor="w", padx=28, pady=(24, 2))
+        label(self, "Choisissez les classes à exporter, puis le format.", 12, color=C["muted"]).pack(
+            anchor="w", padx=28)
+        self.scope = ctk.StringVar(value="classe" if current in classes else "toutes")
+
+        def radio(parent, text, value, var, pady=(10, 2)):
+            ctk.CTkRadioButton(parent, text=text, variable=var, value=value, fg_color=C["primary"],
+                               font=(FONT, 12), text_color=C["text"]).pack(anchor="w", padx=28, pady=pady)
+
+        radio(self, "Une classe :", "classe", self.scope, (18, 2))
+        self.cls_cb = combo(self, list(classes) or [""])
+        self.cls_cb.pack(fill="x", padx=(56, 28))
+        self.cls_cb.set(current if current in classes else next(iter(classes), ""))
+        radio(self, "Toutes les classes (une feuille / page par classe)", "toutes", self.scope)
+        label(self, "Format", 12, True).pack(anchor="w", padx=28, pady=(18, 0))
+        self.fmt = ctk.StringVar(value="xlsx")
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(anchor="w", padx=28, pady=(4, 0))
+        for text, v in (("Excel (.xlsx)", "xlsx"), ("PDF (.pdf)", "pdf")):
+            ctk.CTkRadioButton(row, text=text, variable=self.fmt, value=v, fg_color=C["primary"], font=(FONT, 12),
+                               text_color=C["text"]).pack(side="left", padx=(0, 20))
+        btns = ctk.CTkFrame(self, fg_color="transparent")
+        btns.pack(fill="x", padx=28, pady=22, side="bottom")
+        button(btns, "Annuler", self.destroy, "light", ic="x", width=120).pack(side="right", padx=(8, 0))
+        button(btns, "Exporter", self.go, ic="download", width=140).pack(side="right")
+        self.transient(master.winfo_toplevel())
+        self.after(150, self.grab_set)
+
+    def go(self):
+        scope = self.scope.get()
+        cid = self.classes.get(self.cls_cb.get())
+        if scope == "classe" and not cid:
+            messagebox.showwarning("Export", "Sélectionnez une classe.", parent=self)
+            return
+        fmt = self.fmt.get()
+        self.destroy()
+        self.on_export(scope, cid, fmt)
+
+
+def export_class_lists(page):
+    if not page.classes:
+        messagebox.showinfo("Export", "Aucune classe : créez d'abord des classes.")
+        return
+    ClassListDialog(page, page.classes, page.class_cb.get(),
+                    lambda scope, cid, fmt: do_export_lists(page, scope, cid, fmt))
+
+
+def do_export_lists(page, scope, cid, fmt):
+    tables, base = student_export.build_tables(scope, cid, page.classes)
+    if not tables:
+        messagebox.showinfo("Export", "Aucun élève à exporter.")
+        return
+    ext, types = ((".xlsx", [("Classeur Excel", "*.xlsx")]) if fmt == "xlsx"
+                  else (".pdf", [("Document PDF", "*.pdf")]))
+    path = filedialog.asksaveasfilename(title="Exporter la liste de classe", defaultextension=ext,
+                                        initialfile=base + ext, filetypes=types)
+    if not path:
+        return
+    try:
+        student_export.write_file(path, tables, fmt)
+    except ImportError as ex:
+        messagebox.showerror("Dépendance manquante", f"Un module requis est absent : {ex}\n\n"
+                                                     "Installez les dépendances avec :\npip install reportlab openpyxl")
+        return
+    except Exception as ex:
+        messagebox.showerror("Échec de l'export", f"Impossible de générer le fichier :\n{ex}")
+        return
+    messagebox.showinfo("Export terminé", f"Fichier créé avec succès :\n{path}")
+
+
 class StudentsPage(CrudPage):
     """Élèves : la classe se choisit en haut de la liste et s'applique à l'enregistrement et à l'import."""
 
@@ -76,7 +160,8 @@ class StudentsPage(CrudPage):
                          after_insert=lambda sid: student_repository.set_matricule(sid, new_matricule(sid)),
                          list_params=self.list_params, insert_extra=self.insert_extra,
                          actions=[("Importer Excel", import_students, "primary", "upload"),
-                                  ("Modèle Excel", save_template, "light", "download")])
+                                  ("Modèle Excel", save_template, "light", "download"),
+                                  ("Exporter la liste", export_class_lists, "light", "download")])
         label(self.head, "Classe", 12, color=C["muted"]).pack(side="left", padx=(24, 6))
         self.class_cb = combo(self.head, [ALL], command=lambda _=None: self.refresh(), width=200)
         self.class_cb.set(ALL)

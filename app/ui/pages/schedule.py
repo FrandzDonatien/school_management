@@ -9,7 +9,7 @@ from app.constants import C, DAYS, FONT, PALETTE, PLAN, SLOTS
 from app.database.queries import cur_year
 from app.database.seed import load_example_data
 from app.repositories import class_repository, schedule_repository, teacher_repository
-from app.services import export_service, schedule_service
+from app.services import schedule_service, schedule_export
 from app.services.schedule_service import ScheduleError
 from app.services.settings_service import default_hours, free_params
 from app.services.teacher_service import teacher_target
@@ -419,7 +419,7 @@ class SchedulePage(ctk.CTkFrame):
         ExportDialog(self, self.cls_map, self.teachers, scope, cname, tname, self.do_export)
 
     def do_export(self, scope, cid, tid, fmt_):
-        tables, base = export_service.build_tables(scope, cid, tid, self.cls_map, self.teachers)
+        tables, base = schedule_export.build_tables(scope, cid, tid, self.cls_map, self.teachers)
 
         if not tables:
             messagebox.showinfo("Export", "Rien à exporter.")
@@ -454,7 +454,7 @@ class SchedulePage(ctk.CTkFrame):
             return
 
         try:
-            export_service.write_file(path, tables, fmt_)
+            schedule_export.write_file(path, tables, fmt_)
         except ImportError as ex:
             messagebox.showerror(
                 "Dépendance manquante",
