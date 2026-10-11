@@ -276,12 +276,18 @@ pip install -r requirements.txt
 ```
 
 ### 4. Build
-
+v1
 ```cmd
 pyinstaller --noconfirm --clean --onefile --windowed --name EduManager --icon "assets\EduManager_fixed.ico" --collect-data customtkinter --collect-submodules app --paths . --add-data "assets;assets" --add-data "app/reports/templates;app/reports/templates" --add-data "data/ecole.db;data" main.py
 ```
-
-
+v2
+```cmd
+pyinstaller --noconsole --onefile --name EduManager --icon assets/EduManager_fixed.ico --collect-all customtkinter --add-data "assets;assets" --add-data "data/ecole.db;data" --add-data "app/reports/templates;app/reports/templates" main.py
+```
+v3
+```cmd
+pyinstaller --noconfirm --clean --onefile --windowed --name EduManager --icon "assets\EduManager_fixed.ico" --collect-all customtkinter --collect-submodules app --paths . --add-data "assets;assets" --add-data "app/reports/templates;app/reports/templates" --add-data "data/ecole.db;data" main.py
+```
 ---
 
 ## Lancement
