@@ -15,6 +15,7 @@ from app.ui.pages.grades import GradesPage
 from app.ui.pages.schedule import SchedulePage
 from app.ui.pages.school_years import YearsPage
 from app.ui.pages.settings import SettingsPage
+from app.ui.pages.stats import StatsPage
 from app.ui.pages.students import students_page
 from app.ui.pages.subjects import subjects_page
 from app.ui.pages.teachers import TeachersPage
@@ -26,6 +27,7 @@ class MainFrame(ctk.CTkFrame):
             ("teachers", "Enseignants", "user"), ("subjects", "Matières", "book"),
             ("classes", "Classes", "school"),
             ("grades", "Saisie des notes", "pencil"), ("bulletins", "Bulletins de notes", "file"),
+            ("stats", "Statistiques", "chart"),
             ("schedule", "Emploi du temps", "clock"), ("years", "Années scolaires", "calendar"),
             ("settings", "Paramètres", "gear")]
 
@@ -36,26 +38,32 @@ class MainFrame(ctk.CTkFrame):
         self.current_key = "dashboard"
         self.year_map = {}
 
+        # ---------- Barre latérale ----------
         self.side = ctk.CTkFrame(self, fg_color=C["sidebar"], corner_radius=0, width=270)
         self.side.grid(row=0, column=0, sticky="ns")
         self.side.grid_propagate(False)
+
         self.brand = None
+        self.menu_label = label(self.side, "MENU", 11, True, "#8A99AF")
+        self.menu_label.pack(anchor="w", padx=28, pady=(0, 8))
         self.build_brand()
-        label(self.side, "MENU", 11, True, "#8A99AF").pack(anchor="w", padx=28, pady=(0, 8))
+
         self.titles = {k: t for k, t, _ in self.MENU}
         self.btns = {}
         for key, text, ic in self.MENU:
             b = ctk.CTkButton(self.side, text="  " + text, image=icon(ic, C["sidebar_text"], 20), compound="left",
-                              anchor="w", height=42, corner_radius=8, fg_color="transparent",
+                              anchor="w", height=40, corner_radius=8, fg_color="transparent",
                               hover_color=C["sidebar_hover"], text_color=C["sidebar_text"], font=(FONT, 13),
                               command=lambda k=key: self.show(k))
-            b.pack(fill="x", padx=16, pady=2)
+            b.pack(fill="x", padx=16, pady=1)
             self.btns[key] = b
 
+        # ---------- Zone droite ----------
         right = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
         right.rowconfigure(2, weight=1)
+
         header = ctk.CTkFrame(right, fg_color="white", corner_radius=0, height=76)
         header.grid(row=0, column=0, sticky="ew")
         header.pack_propagate(False)
@@ -69,11 +77,6 @@ class MainFrame(ctk.CTkFrame):
         self.year_cb = combo(header, [""], command=self.on_year_pick, width=190)
         self.year_cb.pack(side="right", padx=(0, 14))
         label(header, "Année scolaire", 11, color=C["muted"]).pack(side="right", padx=(0, 8))
-        ub = ctk.CTkFrame(header, fg_color="transparent")
-        ub.pack(side="right", padx=(0, 18))
-        #label(ub, username, 13, True).pack(anchor="e", pady=(16, 0))
-        #ctk.CTkLabel(header, text=username[:2].upper(), width=42, height=42, corner_radius=21, fg_color=C["primary"],
-        #             text_color="white", font=(FONT, 13, "bold")).pack(side="right", padx=12)
 
         self.banner = ctk.CTkFrame(right, fg_color=C["warning_light"], corner_radius=0, height=40)
         self.banner.grid(row=1, column=0, sticky="ew")
@@ -89,7 +92,8 @@ class MainFrame(ctk.CTkFrame):
         self.pages = {
             "dashboard": DashboardPage(area), "students": students_page(area), "teachers": TeachersPage(area),
             "subjects": subjects_page(area), "classes": classes_page(area),
-            "grades": GradesPage(area), "bulletins": BulletinPage(area), "schedule": SchedulePage(area),
+            "grades": GradesPage(area), "bulletins": BulletinPage(area), "stats": StatsPage(area),
+            "schedule": SchedulePage(area),
             "years": YearsPage(area, self.on_years_changed), "settings": SettingsPage(area, self.build_brand),
         }
         for p in self.pages.values():
@@ -97,6 +101,7 @@ class MainFrame(ctk.CTkFrame):
         self.update_year_box()
         self.show("dashboard")
 
+    # ---------- Année scolaire ----------
     def update_year_box(self):
         act, cur = active_year(), cur_year()
         self.year_map = {r["libelle"] + ("  (active)" if r["id"] == act else ""): r["id"]
@@ -128,12 +133,14 @@ class MainFrame(ctk.CTkFrame):
     def update_sub(self):
         self.sub.configure(text=f"{date_fr()}  •  Année scolaire {get_settings()['annee']}")
 
+    # ---------- Logo / nom de l'école ----------
     def build_brand(self):
         if self.brand:
             self.brand.destroy()
         S = get_settings()
         self.brand = ctk.CTkFrame(self.side, fg_color="transparent")
-        self.brand.pack(fill="x", padx=22, pady=(26, 24), before=self.side.winfo_children()[0] if self.side.winfo_children()[0] is not self.brand else None)
+        # Toujours placé au-dessus du libellé « MENU »
+        self.brand.pack(fill="x", padx=22, pady=(26, 24), before=self.menu_label)
         img = logo_ctk(44)
         if img:
             ctk.CTkLabel(self.brand, image=img, text="").pack(side="left")
@@ -142,6 +149,7 @@ class MainFrame(ctk.CTkFrame):
                          fg_color=C["primary"]).pack(side="left")
         label(self.brand, S["ecole_nom"], 14, True, "white", wraplength=170, justify="left").pack(side="left", padx=10)
 
+    # ---------- Navigation ----------
     def show(self, key):
         self.current_key = key
         for k, b in self.btns.items():
