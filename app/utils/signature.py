@@ -1,45 +1,47 @@
 """Signatures des enseignants, imprimées sur le bulletin (colonne « Appréciations générales »).
 
-Une image PNG par enseignant dans assets/signatures/, nommée d'après son nom : « amakou.png ».
-Si l'enseignant a un prénom, « nom_prenom.png » est cherché en premier, puis « nom.png ».
-Il suffit donc de déposer des fichiers NOM.png dans le dossier, ou d'utiliser le bouton « Choisir… » de la
-fiche enseignant, qui détoure automatiquement la signature (fond du papier rendu transparent, marges rognées).
+Les signatures sont stockées dans la base (table `signatures`, image PNG en BLOB), une par enseignant,
+identifiée par son nom normalisé : « amakou_komlan » (nom_prenom) ou « amakou » (nom seul).
+Si l'enseignant a un prénom, « nom_prenom » est cherché en premier, puis « nom ».
+Le bouton « Choisir… » de la fiche enseignant détoure automatiquement la signature
+(fond du papier rendu transparent, marges rognées).
+Les anciens fichiers du dossier SIGNATURES_DIR sont repris dans la base au premier lancement.
 """
+import io
 import os
 
 from app.config import SIGNATURES_DIR
+from app.database.connection import execute, query
+from app.services.settings_service import set_setting
 from app.utils.formatting import norm
 
 EXTS = (".png", ".jpg", ".jpeg")
 MAX_WIDTH = 500          # largeur maximale de l'image enregistrée (en pixels)
-_cache = {}              # {(chemin, date de modification): octets}
+_cache = {}              # {clé: octets} ; vidé à chaque écriture
 
 
 def _names(nom, prenom=""):
-    """Noms de fichier possibles (sans extension), du plus précis au plus général."""
+    """Clés possibles, de la plus précise à la plus générale."""
     n, p = norm(nom), norm(prenom)
     return [f"{n}_{p}", n] if p and n else ([n] if n else [])
 
 
 def find(nom, prenom=""):
-    """Chemin de la signature de l'enseignant, ou None."""
+    """Clé de la signature de l'enseignant dans la base, ou None (valeur « vraie » si elle existe)."""
     for name in _names(nom, prenom):
-        for ext in EXTS:
-            path = os.path.join(SIGNATURES_DIR, name + ext)
-            if os.path.isfile(path):
-                return path
+        if query("SELECT 1 FROM signatures WHERE nom=?", (name,)):
+            return name
     return None
 
 
 def load_bytes(nom, prenom=""):
-    """Contenu de l'image (pour l'insérer dans le PDF), ou None."""
-    path = find(nom, prenom)
-    if not path:
+    """Contenu de l'image (pour l'afficher ou l'insérer dans le PDF), ou None."""
+    key = find(nom, prenom)
+    if not key:
         return None
-    key = (path, os.path.getmtime(path))
     if key not in _cache:
-        with open(path, "rb") as f:
-            _cache[key] = f.read()
+        r = query("SELECT data FROM signatures WHERE nom=?", (key,))
+        _cache[key] = bytes(r[0]["data"]) if r and r[0]["data"] else None
     return _cache[key]
 
 
@@ -69,23 +71,42 @@ def process(img):
 
 
 def import_image(src, nom, prenom=""):
-    """Détoure l'image choisie et l'enregistre comme signature de l'enseignant. Retourne le chemin du fichier."""
+    """Détoure l'image choisie et l'enregistre en base comme signature de l'enseignant. Retourne la clé."""
     from PIL import Image, ImageOps
     names = _names(nom, prenom)
     if not names:
         raise ValueError("Nom d'enseignant vide.")
     with Image.open(src) as im:
         out = process(ImageOps.exif_transpose(im))
-    os.makedirs(SIGNATURES_DIR, exist_ok=True)
+    buf = io.BytesIO()
+    out.save(buf, "PNG", optimize=True)
     remove(nom, prenom)                      # une seule signature par enseignant
-    dest = os.path.join(SIGNATURES_DIR, names[0] + ".png")
-    out.save(dest, "PNG", optimize=True)
-    return dest
+    execute("INSERT INTO signatures(nom, data) VALUES(?,?) "
+            "ON CONFLICT(nom) DO UPDATE SET data=excluded.data", (names[0], buf.getvalue()))
+    _cache.clear()
+    return names[0]
 
 
 def remove(nom, prenom=""):
-    """Supprime la signature affichée pour cet enseignant. Retourne True si un fichier a été supprimé."""
-    path = find(nom, prenom)
-    if path:
-        os.remove(path)
-    return bool(path)
+    """Supprime la signature de cet enseignant. Retourne True si une signature a été supprimée."""
+    found = False
+    for name in _names(nom, prenom):
+        if query("SELECT 1 FROM signatures WHERE nom=?", (name,)):
+            execute("DELETE FROM signatures WHERE nom=?", (name,))
+            found = True
+    _cache.clear()
+    return found
+
+
+def import_legacy_files():
+    """Migration (une seule fois) : fichiers du dossier SIGNATURES_DIR -> base. Les fichiers ne sont pas supprimés."""
+    if query("SELECT 1 FROM settings WHERE key='sig_migrated'"):
+        return
+    if os.path.isdir(SIGNATURES_DIR):
+        for fn in sorted(os.listdir(SIGNATURES_DIR)):
+            stem, ext = os.path.splitext(fn)
+            path = os.path.join(SIGNATURES_DIR, fn)
+            if ext.lower() in EXTS and os.path.isfile(path):
+                with open(path, "rb") as f:
+                    execute("INSERT OR IGNORE INTO signatures(nom, data) VALUES(?,?)", (stem.lower(), f.read()))
+    set_setting("sig_migrated", "1")

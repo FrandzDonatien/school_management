@@ -5,7 +5,8 @@ from app.database.queries import active_year
 from app.database.schema import (DDL_CLASSES, DDL_GRADES, DDL_SCHEDULE, DDL_SUBJECTS, DDL_TEACHER_SUBJECTS,
                                  create_tables)
 from app.database.seed import seed_defaults
-from app.services.settings_service import default_settings, load_plan, set_setting
+from app.services.settings_service import default_settings, import_legacy_logo, load_plan, set_setting
+from app.utils import signature
 from app.utils.formatting import abbr
 
 
@@ -81,6 +82,8 @@ def run_migrations():
                         SELECT id, matiere_id FROM teachers WHERE matiere_id IN (SELECT id FROM subjects)""")
         set_setting("ts_migrated", "1")
     conn.commit()
+    import_legacy_logo()  # ancien logo (chemin de fichier) -> base
+    signature.import_legacy_files()  # anciennes signatures (fichiers) -> base
     load_plan()
     conn.execute("DELETE FROM schedule WHERE day >= ? OR slot >= ?", (len(DAYS), len(SLOTS)))
     conn.commit()

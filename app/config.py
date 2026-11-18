@@ -3,7 +3,7 @@ import os
 import sys
 
 APP_NAME = "EduManager"
-APP_VERSION = "5.0"
+APP_VERSION = "1.0"
 
 if getattr(sys, "frozen", False):
     # Ressources embarquées (lecture seule), dans le dossier temporaire

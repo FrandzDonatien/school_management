@@ -1,8 +1,11 @@
 import base64
+import glob
+import hashlib
 import mimetypes
 import os
 
 from app.calculations.schedule import build_plan
+from app.config import DATA_DIR
 from app.constants import PLAN, SLOTS
 from app.database.connection import execute, query
 from app.database.queries import cur_year
@@ -20,7 +23,8 @@ def default_settings():
 
 def get_settings():
     d = default_settings()
-    for r in query("SELECT key,value FROM settings"):
+    # Le logo (volumineux) est exclu : il se lit via logo_data_uri() / logo_path()
+    for r in query("SELECT key,value FROM settings WHERE key NOT IN ('logo_data','logo_mime')"):
         d[r["key"]] = r["value"]
     y = query("SELECT libelle FROM years WHERE id=?", (cur_year(),))
     if y:
@@ -50,18 +54,64 @@ def free_params():
     return f, S["mode_libres"]
 
 
-def logo_path():
-    p = get_settings()["logo"]
-    return p if p and os.path.exists(p) else None
+# ---------- Logo stocké en base ----------
+def _logo_row():
+    d = {r["key"]: r["value"]
+         for r in query("SELECT key,value FROM settings WHERE key IN ('logo_data','logo_mime')")}
+    return (d.get("logo_data") or ""), (d.get("logo_mime") or "image/png")
+
+
+def set_logo(path):
+    """Enregistre le fichier image dans la base (base64)."""
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    set_setting("logo_data", b64)
+    set_setting("logo_mime", mimetypes.guess_type(path)[0] or "image/png")
+
+
+def clear_logo():
+    execute("DELETE FROM settings WHERE key IN ('logo_data','logo_mime','logo')")
+
+
+def has_logo():
+    return bool(_logo_row()[0])
 
 
 def logo_data_uri():
-    p = logo_path()
-    if not p:
-        return ""
-    mime = mimetypes.guess_type(p)[0] or "image/png"
-    with open(p, "rb") as f:
-        return f"data:{mime};base64,{base64.b64encode(f.read()).decode()}"
+    b64, mime = _logo_row()
+    return f"data:{mime};base64,{b64}" if b64 else ""
+
+
+def logo_path():
+    """Chemin d'un fichier temporaire reconstruit depuis la base (pour les composants qui exigent un fichier)."""
+    b64, mime = _logo_row()
+    if not b64:
+        return None
+    ext = mimetypes.guess_extension(mime) or ".png"
+    cache_dir = os.path.join(DATA_DIR, "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    p = os.path.join(cache_dir, f"logo_{hashlib.sha1(b64.encode()).hexdigest()[:10]}{ext}")
+    if not os.path.exists(p):
+        for old in glob.glob(os.path.join(cache_dir, "logo_*")):
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+        with open(p, "wb") as f:
+            f.write(base64.b64decode(b64))
+    return p
+
+
+def import_legacy_logo():
+    """Migration : ancien logo stocké sous forme de chemin -> base."""
+    if has_logo():
+        return
+    r = query("SELECT value FROM settings WHERE key='logo'")
+    p = r[0]["value"] if r else ""
+    if p and os.path.exists(p):
+        set_logo(p)
+    if r:
+        set_setting("logo", "")
 
 
 def load_plan():

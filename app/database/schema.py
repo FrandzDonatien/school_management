@@ -31,6 +31,8 @@ DDL_GRADES = """CREATE TABLE IF NOT EXISTS grades(
         id INTEGER PRIMARY KEY, student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
         subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE, periode TEXT,
         interro REAL, devoir REAL, compo REAL, UNIQUE(student_id, subject_id, periode))"""
+DDL_SIGNATURES = """CREATE TABLE IF NOT EXISTS signatures(
+        nom TEXT PRIMARY KEY, data BLOB NOT NULL)"""
 
 
 def create_tables():
@@ -54,4 +56,5 @@ def create_tables():
     conn.execute(DDL_CLASSES.format(name="IF NOT EXISTS classes"))
     conn.execute(DDL_SCHEDULE.format(name="IF NOT EXISTS schedule"))
     conn.execute(DDL_ASSIGN)
+    conn.execute(DDL_SIGNATURES)
     conn.commit()

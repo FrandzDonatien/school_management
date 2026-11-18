@@ -14,6 +14,9 @@ from app.utils.formatting import fmt, mention
 
 _PIP = {"PIL": "pillow", "pypdfium2": "pypdfium2", "reportlab": "reportlab"}
 
+BASE_COLS = [("Discipline", 150), ("Interro", 58), ("Devoir", 58), ("Moy. Cl.", 64), ("Compo", 58),
+             ("Moy. Gén.", 66), ("Coef", 44), ("Note déf.", 68), ("Rang", 46), ("Appréciation", 96)]
+
 
 class BulletinPage(ctk.CTkFrame):
     def __init__(self, master):
@@ -30,16 +33,13 @@ class BulletinPage(ctk.CTkFrame):
         self.period_cb = labeled_combo(top, 2, "Période", lambda _=None: self.load(), PERIODES)
         self.period_cb.set(PERIODES[0])
 
-        body = card(self)
-        body.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
-        body.rowconfigure(1, weight=1)
-        body.columnconfigure(0, weight=1)
-        label(body, "Aperçu des résultats", 16, True).grid(row=0, column=0, sticky="w", padx=22, pady=(20, 10))
-        self.dt = DataTable(body, [
-            ("Discipline", 150), ("Interro", 62), ("Devoir", 62), ("Moy. Cl.", 68), ("Compo", 62),
-            ("Moy. Gén.", 70), ("Coef", 48), ("Note déf.", 72), ("Rang", 50), ("Appréciation", 100)],
-            search=False, paginate=False, with_id=False)
-        self.dt.grid(row=1, column=0, sticky="nsew", padx=22, pady=(0, 20))
+        self.body = card(self)
+        self.body.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
+        self.body.rowconfigure(1, weight=1)
+        self.body.columnconfigure(0, weight=1)
+        label(self.body, "Aperçu des résultats", 16, True).grid(row=0, column=0, sticky="w", padx=22, pady=(20, 10))
+        self.dt, self.dt_per = None, None
+        self.build_table(PERIODES[0])
 
         side = card(self, width=310)
         side.grid(row=1, column=1, sticky="ns")
@@ -54,6 +54,8 @@ class BulletinPage(ctk.CTkFrame):
         self.rank_lbl.pack(anchor="w", padx=14, pady=(10, 0))
         self.ment_lbl = label(sc, "Mention : —", 13)
         self.ment_lbl.pack(anchor="w", padx=14)
+        self.ann_lbl = label(sc, "", 13, True, C["primary"])
+        self.ann_lbl.pack(anchor="w", padx=14, pady=(8, 0))
         label(sc, "Discipline (apparaît sur le bulletin)", 12, True).pack(anchor="w", padx=14, pady=(16, 0))
         self.dis = {}
         for k, t in [("absences", "Absences"), ("sanctions", "Sanctions"), ("merites", "Mérites"), ("exclusions", "Exclusions")]:
@@ -64,6 +66,21 @@ class BulletinPage(ctk.CTkFrame):
         button(sc, "Bulletins de toute la classe", lambda: self.generate(True), "light", ic="layers").pack(fill="x", padx=14)
         button(sc, "Vérifier un numéro de bulletin", self.verify_code, "light", ic="lock").pack(
             fill="x", padx=14, pady=(18, 6))
+
+    def build_table(self, per):
+        """(Re)crée le tableau : colonnes de récap des trimestres précédents, + moyenne annuelle au dernier."""
+        if self.dt is not None and self.dt_per == per:
+            return
+        if self.dt is not None:
+            self.dt.destroy()
+        idx = PERIODES.index(per)
+        cols = list(BASE_COLS)
+        cols += [(f"Moy. T{i + 1}", 64) for i in range(idx)]
+        if idx == len(PERIODES) - 1:
+            cols.append(("Moy. Ann.", 70))
+        self.dt = DataTable(self.body, cols, search=False, paginate=False, with_id=False)
+        self.dt.grid(row=1, column=0, sticky="nsew", padx=22, pady=(0, 20))
+        self.dt_per = per
 
     def refresh(self):
         self.classes = class_repository.options(cur_year())
@@ -85,27 +102,41 @@ class BulletinPage(ctk.CTkFrame):
 
     def load(self):
         sid, per, cid = self.current()
+        self.build_table(per)
         self.dt.set_rows([])
         for e in self.dis.values():
             e.delete(0, "end")
         self.moy_lbl.configure(text="--")
         self.rank_lbl.configure(text="Rang : —")
         self.ment_lbl.configure(text="Mention : —")
+        self.ann_lbl.configure(text="")
         if not sid:
             return
         res, subs, stats = grade_service.compute_class(cid, per)
+        prev, annual = grade_service.compute_recap(cid, per, current=res)
         r = res[sid]
         rows = []
         for sub in subs:
             x = r["subjects"].get(sub["id"])
-            rows.append((sub["nom"], fmt(x["interro"]), fmt(x["devoir"]), fmt(x["mc"]), fmt(x["compo"]), fmt(x["mg"]),
-                         f"{x['coef']:g}", fmt(x["nd"]), x["rang"], mention(x["mg"])) if x
-                        else (sub["nom"], "", "", "", "", "", f"{sub['coefficient']:g}", "", "", ""))
+            base = ((sub["nom"], fmt(x["interro"]), fmt(x["devoir"]), fmt(x["mc"]), fmt(x["compo"]), fmt(x["mg"]),
+                     f"{x['coef']:g}", fmt(x["nd"]), x["rang"], mention(x["mg"])) if x
+                    else (sub["nom"], "", "", "", "", "", f"{sub['coefficient']:g}", "", "", ""))
+            extra = []
+            for _, pres in prev:                                   # moyennes des trimestres précédents
+                px = pres.get(sid, {}).get("subjects", {}).get(sub["id"])
+                extra.append(fmt(px["mg"]) if px else "")
+            if annual:                                             # moyenne annuelle par discipline
+                extra.append(fmt(annual[sid]["subjects"].get(sub["id"])))
+            rows.append(base + tuple(extra))
         self.dt.set_rows(rows)
         self.moy_lbl.configure(text=fmt(r["moy"]) or "--")
         if r["rang"]:
             self.rank_lbl.configure(text=f"Rang : {r['rang']} / {stats['effectif']}")
         self.ment_lbl.configure(text=f"Mention : {mention(r['moy']) or '—'}")
+        if annual and annual[sid]["moy"] is not None:
+            rang = annual[sid]["rang"]
+            self.ann_lbl.configure(text=f"Moy. annuelle : {fmt(annual[sid]['moy'])}"
+                                        + (f"  (rang {rang} / {stats['effectif']})" if rang else ""))
         d = grade_service.get_discipline(sid, per)
         if d:
             for k, e in self.dis.items():

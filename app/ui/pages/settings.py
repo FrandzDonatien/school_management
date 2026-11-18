@@ -1,19 +1,19 @@
 import os
-import shutil
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
 from app.calculations.schedule import check_hours
-from app.config import ASSETS_DIR
 from app.constants import C, R, SLOTS, TIME_KEYS
 from app.repositories import schedule_repository
-from app.services.settings_service import get_settings, load_plan, set_setting
+from app.services.settings_service import clear_logo, get_settings, load_plan, set_logo, set_setting
 from app.ui.components.buttons import button
 from app.ui.components.card import card, label
 from app.ui.components.icons import logo_ctk
 from app.ui.components.inputs import combo, entry
 from app.utils.dates import parse_time
+
+MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2 Mo
 
 
 class SettingsPage(ctk.CTkFrame):
@@ -120,15 +120,19 @@ class SettingsPage(ctk.CTkFrame):
         p = filedialog.askopenfilename(title="Choisir le logo", filetypes=[("Images", "*.png *.jpg *.jpeg *.gif *.bmp")])
         if not p:
             return
-        os.makedirs(ASSETS_DIR, exist_ok=True)
-        dest = os.path.join(ASSETS_DIR, "logo" + os.path.splitext(p)[1].lower())
-        shutil.copy2(p, dest)
-        set_setting("logo", dest)
+        if os.path.getsize(p) > MAX_LOGO_BYTES:
+            messagebox.showwarning("Logo", "Image trop volumineuse (2 Mo maximum).")
+            return
+        try:
+            set_logo(p)  # stocké en base (table settings)
+        except OSError as e:
+            messagebox.showerror("Logo", f"Impossible de lire l'image : {e}")
+            return
         self.show_logo()
         self.on_saved()
 
     def remove_logo(self):
-        set_setting("logo", "")
+        clear_logo()
         self.show_logo()
         self.on_saved()
 
@@ -160,7 +164,8 @@ class SettingsPage(ctk.CTkFrame):
         except ValueError:
             messagebox.showwarning("Enseignants", "Heures par semaine : entier de 1 à 60 ; heures libres : entier de 0 à 10.")
             return
-        set_setting("mode_libres", self.mode_cb.get())
+
+        # Confirmation avant toute écriture : en cas de refus, rien n'est enregistré.
         S = get_settings()
         if any(S[k] != v[k] for k in v) and schedule_repository.any_schedule():
             if not messagebox.askyesno("Horaires modifiés",
@@ -168,6 +173,9 @@ class SettingsPage(ctk.CTkFrame):
                                        "(toutes les années).\nContinuer ?"):
                 return
             schedule_repository.clear_all()
+
+        # --- À partir d'ici, tout est enregistré en base ---
+        v["heures_hebdo"], v["heures_libres"] = str(hh), str(fl)  # entiers normalisés
         for k, e in self.entries.items():
             if k not in v:
                 set_setting(k, e.get().strip())
@@ -175,6 +183,7 @@ class SettingsPage(ctk.CTkFrame):
             set_setting(k, val)
             self.entries[k].delete(0, "end")
             self.entries[k].insert(0, val)
+        set_setting("mode_libres", self.mode_cb.get())
         load_plan()
         self.update_preview()
         self.on_saved()

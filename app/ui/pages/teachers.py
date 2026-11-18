@@ -1,4 +1,6 @@
 """Enseignants : une ou plusieurs matières, objectif horaire hebdomadaire, signature (bulletin)."""
+import io
+
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
@@ -33,7 +35,7 @@ class TeachersPage(CrudPage):
                                       corner_radius=8)
         self.sub_frame.pack(fill="x", padx=14, pady=(0, 10))
 
-        # signature imprimée sur le bulletin (colonne « Appréciations générales »)
+        # signature imprimée sur le bulletin (colonne « Appréciations générales »), stockée en base
         label(self.body, "Signature (imprimée sur le bulletin)", 12, color=C["muted"]).pack(
             anchor="w", padx=14, pady=(8, 4))
         self.sig_frame = ctk.CTkFrame(self.body, fg_color=C["soft"], border_width=1, border_color=C["border"],
@@ -70,12 +72,12 @@ class TeachersPage(CrudPage):
 
     def show_signature(self):
         names = self.teacher_names()
-        path = signature.find(*names) if names else None
+        data = signature.load_bytes(*names) if names else None   # lue depuis la base
         img = None
-        if path:
+        if data:
             try:
                 from PIL import Image
-                with Image.open(path) as im:
+                with Image.open(io.BytesIO(data)) as im:
                     im = im.convert("RGBA")
                 k = min(210 / im.width, 62 / im.height, 1.0)
                 size = (max(1, round(im.width * k)), max(1, round(im.height * k)))
@@ -100,7 +102,7 @@ class TeachersPage(CrudPage):
         if not path:
             return
         try:
-            signature.import_image(path, *names)   # détourage automatique : fond transparent, marges rognées
+            signature.import_image(path, *names)   # détourage automatique, puis enregistrement en base
         except Exception as ex:
             messagebox.showerror("Signature", f"Image inutilisable :\n{ex}")
             return
