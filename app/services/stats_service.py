@@ -1,8 +1,14 @@
-"""Statistiques des notes : matières, sexe, professeurs, classes, classement."""
+"""Statistiques des notes : mêmes calculs que les bulletins (compute_class / compute_recap).
+Période = un trimestre, ou « Annuel » (moyennes annuelles issues de compute_recap)."""
 from collections import Counter
 
+from app.constants import PERIODES
 from app.database.connection import query
+from app.repositories import schedule_repository, student_repository
+from app.services import grade_service
+from app.utils.formatting import fmt, person
 
+ANNUEL = "Annuel"
 SEUIL = 10  # moyenne minimale pour être « admis »
 SEXES = {"M": "M", "G": "M", "H": "M", "F": "F"}
 
@@ -13,62 +19,72 @@ H_MAT_SEXE = ["Matière", "Garçons Eff.", "Garçons Moy.", "Filles Eff.", "Fill
 H_SEXE = ["Sexe", "Effectif", "Admis", "Échecs", "Réussite %", "Moyenne", "Min", "Max"]
 H_PROF = ["Professeur", "Matières", "Classes", "Élèves", "Moyenne", "Note min", "Note max", "Réussite %"]
 H_CLASSES = ["Classe"] + [f"{p} {x}" for p in ("G", "F", "T") for x in ("Eff.", "Adm.", "%")]
-H_RANK = ["Classe", "Rang", "Matricule", "Nom", "Prénoms", "Sexe", "Moyenne", "Décision"]
+
+
+def _n_prev(per):
+    """Nombre de colonnes « Moy. Tn » avant la moyenne finale."""
+    if per == ANNUEL:
+        return len(PERIODES)
+    return PERIODES.index(per) if per in PERIODES else 0
+
+
+def rank_headers(per):
+    """Classement : une colonne par trimestre précédent (tous en mode annuel), puis la moyenne finale."""
+    return (["Classe", "Rang", "Matricule", "Nom", "Prénoms", "Sexe"]
+            + [f"Moy. T{i + 1}" for i in range(_n_prev(per))]
+            + ["Moy. Ann." if per == ANNUEL else "Moyenne", "Décision"])
 
 
 # ---------------------------------------------------------------- données
-def note_matiere(interro, devoir, compo):
-    """Note finale d'une matière sur 20.
-    HYPOTHÈSE : moyenne de classe = (interro + devoir) / 2, puis (moyenne de classe + compo) / 2.
-    À aligner sur grade_service.py si votre formule est différente. Les valeurs None sont ignorées."""
-    cls = [v for v in (interro, devoir) if v is not None]
-    mc = sum(cls) / len(cls) if cls else None
-    if mc is None and compo is None:
-        return None
-    if mc is None:
-        return float(compo)
-    if compo is None:
-        return float(mc)
-    return (mc + compo) / 2
-
-
-def fetch_grades(year, periode=None, class_id=None):
-    """Dépend du schéma. Une ligne par (élève, matière, période)."""
-    sql = """SELECT c.id AS cid, c.nom AS classe, m.id AS mid, m.nom AS matiere,
-                    s.id AS eid, s.matricule, s.nom, s.prenom, s.sexe,
-                    g.interro, g.devoir, g.compo, COALESCE(m.coefficient, 1) AS coef
-             FROM grades g
-             JOIN students s ON s.id = g.student_id
-             JOIN classes c ON c.id = s.classe_id
-             JOIN subjects m ON m.id = g.subject_id
-             WHERE c.annee_id = ?"""
-    params = [year]
-    if periode:
-        sql += " AND g.periode = ?"
-        params.append(periode)
-    if class_id:
-        sql += " AND c.id = ?"
-        params.append(class_id)
-    out = []
-    for r in query(sql, tuple(params)):
-        note = note_matiere(r["interro"], r["devoir"], r["compo"])
-        if note is None:
-            continue
-        out.append({"cid": r["cid"], "classe": r["classe"], "mid": r["mid"], "matiere": r["matiere"],
-                    "eid": r["eid"], "matricule": r["matricule"] or "", "nom": r["nom"], "prenom": r["prenom"],
-                    "sexe": r["sexe"], "interro": r["interro"], "devoir": r["devoir"], "compo": r["compo"],
-                    "note": note, "coef": float(r["coef"])})
-    return out
-
-
-def fetch_teachers():
-    """{(classe_id, matière_id): nom du professeur}. ADAPTEZ les noms de tables/colonnes à votre schéma."""
+def _g(o, key, default=""):
+    """Lecture tolérante : dict, sqlite3.Row ou objet."""
     try:
-        sql = """SELECT p.nom || ' ' || COALESCE(p.prenom, '') AS prof, a.classe_id, a.subject_id
-                 FROM affectations a JOIN professeurs p ON p.id = a.professeur_id"""
-        return {(r["classe_id"], r["subject_id"]): r["prof"].strip() for r in query(sql)}
+        v = o[key]
     except Exception:
-        return {}
+        v = getattr(o, key, default)
+    return default if v is None else v
+
+
+def fetch_grades(year, periode, class_id=None):
+    """Une ligne par (élève, matière), calculée comme le bulletin.
+    periode = un trimestre ou ANNUEL. Chaque ligne porte aussi la moyenne/rang officiels de l'élève."""
+    annual_mode = periode == ANNUEL
+    target = PERIODES[-1] if annual_mode else periode
+    studs, teachers, out = {}, {}, []
+    for c in query("SELECT id, nom FROM classes WHERE annee_id=? ORDER BY nom", (year,)):
+        if class_id and c["id"] != class_id:
+            continue
+        res, subs, _ = grade_service.compute_class(c["id"], target)
+        prev, annual = grade_service.compute_recap(c["id"], target, current=res)
+        names = {s["id"]: s["nom"] for s in subs}
+        for sid, r in res.items():
+            if annual_mode:
+                a = (annual or {}).get(sid)
+                if not a:
+                    continue
+                moy, rang, subj = a["moy"], a["rang"], a["subjects"]
+            else:
+                moy, rang = r["moy"], r["rang"]
+                subj = {k: v["mg"] for k, v in r["subjects"].items()}
+            if moy is None:
+                continue
+            if sid not in studs:
+                studs[sid] = student_repository.get(sid)
+            stu = studs[sid]
+            tris = [pres.get(sid, {}).get("moy") for _, pres in prev] + [r["moy"]]
+            ident = dict(eid=sid, cid=c["id"], classe=c["nom"],
+                         matricule=_g(stu, "matricule"), nom=str(_g(stu, "nom")).upper(),
+                         prenom=_g(stu, "prenom"), sexe=_g(stu, "sexe", _g(stu, "genre", "")),
+                         moy=moy, rang=rang, tris=tris)
+            for mid, note in subj.items():
+                if note is None or mid not in names:
+                    continue
+                key = (c["id"], mid)
+                if key not in teachers:
+                    t = schedule_repository.teacher_of(c["id"], mid)
+                    teachers[key] = person(t["nom"], t["prenom"]) if t else ""
+                out.append(dict(ident, mid=mid, matiere=names[mid], note=float(note), prof=teachers[key]))
+    return out
 
 
 # ---------------------------------------------------------------- calculs
@@ -101,9 +117,7 @@ def _fmt(d, name):
     return {"classe": name, **{k: (v[0], v[1], _pct(v[1], v[0])) for k, v in d.items()}}
 
 
-def compute(rows, teachers=None):
-    teachers = teachers or {}
-
+def compute(rows, per=None):
     # ----- par matière (+ par sexe)
     mat = {}
     for r in rows:
@@ -126,16 +140,13 @@ def compute(rows, teachers=None):
         g, f = m["sx"]["M"], m["sx"]["F"]
         matieres_sexe.append({"matiere": m["matiere"], "M": (len(g), _stats(g)[0]), "F": (len(f), _stats(f)[0])})
 
-    # ----- moyenne générale de chaque élève (pondérée par les coefficients)
+    # ----- élèves : moyenne et rang OFFICIELS (ceux du bulletin)
     students = {}
     for r in rows:
-        s = students.setdefault(r["eid"], {"classe": r["classe"], "matricule": r["matricule"], "nom": r["nom"],
-                                           "prenom": r["prenom"], "sexe": _sexe(r["sexe"]), "pts": 0.0,
-                                           "coef": 0.0})
-        s["pts"] += r["note"] * r["coef"]
-        s["coef"] += r["coef"]
-    for s in students.values():
-        s["avg"] = round(s["pts"] / s["coef"], 2) if s["coef"] else 0.0
+        if r["eid"] not in students:
+            students[r["eid"]] = {"classe": r["classe"], "matricule": r["matricule"], "nom": r["nom"],
+                                  "prenom": r["prenom"], "sexe": _sexe(r["sexe"]), "avg": round(r["moy"], 2),
+                                  "rang": r["rang"], "tris": r["tris"]}
 
     # ----- résultats par sexe
     sexes = []
@@ -151,10 +162,9 @@ def compute(rows, teachers=None):
     # ----- par professeur
     profs = {}
     for r in rows:
-        p = teachers.get((r["cid"], r["mid"]))
-        if not p:
+        if not r["prof"]:
             continue
-        d = profs.setdefault(p, {"notes": [], "mat": set(), "cls": set(), "eleves": set()})
+        d = profs.setdefault(r["prof"], {"notes": [], "mat": set(), "cls": set(), "eleves": set()})
         d["notes"].append(r["note"])
         d["mat"].add(r["matiere"])
         d["cls"].add(r["classe"])
@@ -176,21 +186,17 @@ def compute(rows, teachers=None):
     classes = [_fmt(cls[k], k) for k in sorted(cls)]
     total = _fmt(tot, "Ensemble")
 
-    # ----- classement par classe (ex aequo : même rang)
-    ranking, by_class = [], {}
-    for s in students.values():
-        by_class.setdefault(s["classe"], []).append(s)
-    for classe in sorted(by_class):
-        lst = sorted(by_class[classe], key=lambda s: (-s["avg"], s["nom"], s["prenom"]))
-        ties = Counter(s["avg"] for s in lst)
-        rank, prev = 0, None
-        for i, s in enumerate(lst, 1):
-            if s["avg"] != prev:
-                rank, prev = i, s["avg"]
-            ranking.append({"classe": classe, "rang": f"{rank} ex" if ties[s["avg"]] > 1 else str(rank),
-                            "matricule": s["matricule"], "nom": s["nom"], "prenom": s["prenom"],
-                            "sexe": s["sexe"] if s["sexe"] != "?" else "", "moyenne": s["avg"],
-                            "decision": "Admis" if s["avg"] >= SEUIL else "Échec"})
+    # ----- classement par classe : rang du bulletin, « ex » si plusieurs élèves ont le même rang
+    ties = Counter((s["classe"], s["rang"]) for s in students.values() if s["rang"])
+    ranking = []
+    for s in sorted(students.values(), key=lambda s: (s["classe"], s["rang"] or 9999, s["nom"], s["prenom"])):
+        rang = ""
+        if s["rang"]:
+            rang = f"{s['rang']} ex" if ties[(s["classe"], s["rang"])] > 1 else str(s["rang"])
+        ranking.append({"classe": s["classe"], "rang": rang, "matricule": s["matricule"], "nom": s["nom"],
+                        "prenom": s["prenom"], "sexe": s["sexe"] if s["sexe"] != "?" else "",
+                        "moyenne": s["avg"], "tris": s["tris"],
+                        "decision": "Admis" if s["avg"] >= SEUIL else "Échec"})
 
     # ----- synthèse
     n = len(students)
@@ -204,8 +210,9 @@ def compute(rows, teachers=None):
                "moyenne": round(sum(avgs) / n, 2) if n else 0.0,
                "max": max(avgs) if avgs else 0.0, "min": min(avgs) if avgs else 0.0,
                "taux_M": taux("Garçons"), "taux_F": taux("Filles")}
-    return {"summary": summary, "matieres": matieres, "matieres_sexe": matieres_sexe, "sexes": sexes,
-            "professeurs": professeurs, "classes": classes, "total": total, "ranking": ranking}
+    return {"per": per, "summary": summary, "matieres": matieres, "matieres_sexe": matieres_sexe,
+            "sexes": sexes, "professeurs": professeurs, "classes": classes, "total": total,
+            "ranking": ranking}
 
 
 # ---------------------------------------------------------------- lignes de tableaux (UI + Excel)
@@ -237,8 +244,18 @@ def rows_classes(d):
 
 
 def rows_ranking(d):
-    return [(x["classe"], x["rang"], x["matricule"], x["nom"], x["prenom"], x["sexe"], x["moyenne"],
-             x["decision"]) for x in d["ranking"]]
+    """Même présentation que le bulletin : moyennes des trimestres précédents, puis moyenne finale
+    (en mode annuel : T1, T2, T3 puis « Moy. Ann. »)."""
+    per = d["per"]
+    n = _n_prev(per)
+    out = []
+    for x in d["ranking"]:
+        tris = x["tris"] if per == ANNUEL else x["tris"][:-1]
+        tri = [fmt(m) for m in tris][:n]
+        tri += [""] * (n - len(tri))
+        out.append((x["classe"], x["rang"], x["matricule"], x["nom"], x["prenom"], x["sexe"],
+                    *tri, x["moyenne"], x["decision"]))
+    return out
 
 
 # ---------------------------------------------------------------- export Excel
@@ -280,5 +297,5 @@ def export_excel(data, path, titre):
     sheet("Par sexe", H_SEXE, rows_sexes(data))
     sheet("Par professeur", H_PROF, rows_profs(data))
     sheet("Classe x sexe", H_CLASSES, rows_classes(data))
-    sheet("Classement", H_RANK, rows_ranking(data))
+    sheet("Classement", rank_headers(data["per"]), rows_ranking(data))
     wb.save(path)

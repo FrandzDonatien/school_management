@@ -9,6 +9,7 @@ from app.constants import C, PERIODES
 from app.database.connection import query
 from app.database.queries import cur_year
 from app.services import stats_service as svc
+from app.services.stats_service import ANNUEL
 from app.ui.components.buttons import button
 from app.ui.components.card import RankList, StatCard, card, label
 from app.ui.components.charts import Chart
@@ -16,12 +17,20 @@ from app.ui.components.data_table import BADGES, DataTable
 from app.ui.components.inputs import combo
 
 ALL = "Toutes"
+PER_OPTIONS = PERIODES + [ANNUEL]
 SB = dict(scrollbar_button_color=C["muted"], scrollbar_button_hover_color=C["primary"])
 
 
 def _cols(headers, first=170, other=88):
     """Largeurs relatives (DataTable répartit l'espace disponible proportionnellement)."""
     return [(headers[0], first)] + [(h, other) for h in headers[1:]]
+
+
+def _rank_cols(per):
+    """Colonnes du classement : une colonne par trimestre précédent, puis la moyenne finale."""
+    widths = {"Classe": 110, "Rang": 70, "Matricule": 120, "Nom": 160, "Prénoms": 170, "Sexe": 60,
+              "Décision": 90}
+    return [(h, widths.get(h, 85)) for h in svc.rank_headers(per)]
 
 
 def _fmt_rows(rows):
@@ -44,6 +53,7 @@ def _block(parent, title, sub, columns, page_size=8, search=False, paginate=True
     t = DataTable(c, columns, page_size=page_size, search=search, paginate=paginate, with_id=False,
                   height=height, badge_cols=badge_cols, badge_fn=_decision_badge)
     t.pack(fill="both", expand=True, padx=20, pady=(14, 18))
+    t._card = c
     return t
 
 
@@ -53,6 +63,7 @@ class StatsPage(ctk.CTkFrame):
         self.data = None
         self.class_map = {}
         self.filter_label = ""
+        self.rank_per = None
 
         # ---- barre de filtres (dans une carte)
         bar_card = card(self)
@@ -60,7 +71,8 @@ class StatsPage(ctk.CTkFrame):
         bar = ctk.CTkFrame(bar_card, fg_color="transparent")
         bar.pack(fill="x", padx=16, pady=10)
         label(bar, "Période", 11, True, C["muted"]).pack(side="left", padx=(0, 8))
-        self.cb_per = combo(bar, [ALL] + PERIODES, command=lambda _: self.refresh(), width=160)
+        self.cb_per = combo(bar, PER_OPTIONS, command=lambda _: self.refresh(), width=160)
+        self.cb_per.set(PERIODES[0])
         self.cb_per.pack(side="left", padx=(0, 18))
         label(bar, "Classe", 11, True, C["muted"]).pack(side="left", padx=(0, 8))
         self.cb_cls = combo(bar, [ALL], command=lambda _: self.refresh(), width=180)
@@ -77,7 +89,7 @@ class StatsPage(ctk.CTkFrame):
                                       text_color=C["text"],
                                       command=self._paint_tabs)
         tv.pack(fill="both", expand=True)
-        t_ov, t_mat, t_sex, t_prof, t_cls, t_rank = [
+        t_ov, t_mat, t_sex, t_prof, t_cls, self.t_rank = [
             tv.add(n) for n in ("Vue d'ensemble", "Matières", "Sexe", "Professeurs", "Classes", "Classement")]
         self._paint_tabs()
 
@@ -143,12 +155,23 @@ class StatsPage(ctk.CTkFrame):
                              "G = Garçons  •  F = Filles  •  T = Total  •  Admis = moyenne générale ≥ 10",
                              _cols(svc.H_CLASSES, 150, 80), page_size=8)
 
-        # ===== Classement
-        self.dt_rank = _block(
-            t_rank, "Classement par classe (du 1er au dernier)", "Les ex aequo partagent le même rang",
-            [("Classe", 110), ("Rang", 70), ("Matricule", 120), ("Nom", 160),
-             ("Prénoms", 170), ("Sexe", 60), ("Moyenne", 90), ("Décision", 90)],
-            page_size=8, search=True, badge_cols=("Décision",))
+        # ===== Classement (recréé quand la période change : colonnes de trimestres variables)
+        self.dt_rank = None
+        self._build_rank(PERIODES[0])
+
+    # ------------------------------------------------------------------ construction
+    def _build_rank(self, per):
+        """(Re)crée le tableau de classement si la période a changé, comme BulletinPage.build_table."""
+        if self.dt_rank is not None and self.rank_per == per:
+            return
+        if self.dt_rank is not None:
+            self.dt_rank._card.destroy()
+        sub = ("Moyenne annuelle : même calcul que le bulletin  •  Les ex aequo partagent le même rang"
+               if per == ANNUEL else
+               "Les moyennes des trimestres précédents sont rappelées  •  Les ex aequo partagent le même rang")
+        self.dt_rank = _block(self.t_rank, "Classement par classe (du 1er au dernier)", sub,
+                              _rank_cols(per), page_size=8, search=True, badge_cols=("Décision",))
+        self.rank_per = per
 
     def _paint_tabs(self):
         """Texte blanc sur l'onglet sélectionné (fond bleu), texte normal sur les autres."""
@@ -163,14 +186,19 @@ class StatsPage(ctk.CTkFrame):
         self.cb_cls.configure(values=[ALL] + list(self.class_map))
         self.cb_cls.set(keep if keep in self.class_map else ALL)
 
+    # ------------------------------------------------------------------ données
     def refresh(self):
         y = cur_year()
         self._reload_classes(y)
         per = self.cb_per.get()
-        per = None if per in ("", ALL) else per
+        if per not in PER_OPTIONS:
+            per = PERIODES[0]
+            self.cb_per.set(per)
         cid = self.class_map.get(self.cb_cls.get())
-        self.filter_label = f"{per or 'Toutes périodes'} / {self.cb_cls.get() or ALL}"
-        self.data = d = svc.compute(svc.fetch_grades(y, per, cid), svc.fetch_teachers())
+        self.filter_label = f"{per} / {self.cb_cls.get() or ALL}"
+        self._build_rank(per)
+
+        self.data = d = svc.compute(svc.fetch_grades(y, per, cid), per)
         s = d["summary"]
         n = s["eleves"]
         pct_echec = round(100 * s["echecs"] / n, 1) if n else 0
